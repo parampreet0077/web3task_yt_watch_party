@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: watchparty-backend
+    runtime: node
+    plan: free
+    buildCommand: npm ci --include=dev && npm run build:server
+    startCommand: npm run start:server
+    preDeployCommand: npm run prisma:deploy
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: CHECKPOINT_DISABLE
+        value: "1"

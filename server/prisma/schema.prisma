@@ -1,0 +1,84 @@
+// Prisma Schema for YouTube Watch Party Application
+// Hosted on PostgreSQL (Neon serverless)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  HOST
+  MODERATOR
+  PARTICIPANT
+}
+
+enum RequestType {
+  PLAY
+  PAUSE
+  SEEK
+  CHANGE_VIDEO
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Room {
+  id               String           @id @default(uuid())
+  code             String           @unique
+  title            String           @default("YouTube Watch Party")
+  currentVideoId   String?          // Nullable: no video selected until Host specifies one
+  currentTimestamp Float            @default(0.0)
+  isPlaying        Boolean          @default(false)
+  playbackRate     Float            @default(1.0)
+  lastSyncAt       DateTime         @default(now())
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  participants     Participant[]
+  controlRequests  ControlRequest[]
+
+  @@index([code])
+}
+
+model Participant {
+  id           String           @id @default(uuid())
+  roomId       String
+  room         Room             @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  displayName  String
+  role         Role             @default(PARTICIPANT)
+  tokenHash    String           @unique
+  isConnected  Boolean          @default(false) // False until participant connects via WebSocket
+  joinedAt     DateTime         @default(now())
+  lastActiveAt DateTime         @default(now())
+
+  requests     ControlRequest[]
+
+  @@unique([roomId, tokenHash])
+  @@index([tokenHash])
+  @@index([roomId])
+  @@index([roomId, role])
+}
+
+model ControlRequest {
+  id              String        @id @default(uuid())
+  roomId          String
+  room            Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  participantId   String
+  participant     Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  type            RequestType
+  targetTimestamp Float?
+  targetVideoId   String?
+  status          RequestStatus @default(PENDING)
+  createdAt       DateTime      @default(now())
+  resolvedAt      DateTime?
+
+  @@index([roomId, status])
+  @@index([participantId])
+}

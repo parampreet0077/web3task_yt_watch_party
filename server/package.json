@@ -1,0 +1,37 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "prisma generate && tsc",
+    "start": "node dist/index.js",
+    "test": "tsx src/test-playback-runner.ts",
+    "test:host": "tsx src/test-host-lifecycle-runner.ts",
+    "test:playback": "tsx src/test-playback-runner.ts",
+    "test:rest": "tsx src/test-runner.ts",
+    "test:socket": "tsx src/test-socket-runner.ts",
+    "test:sync": "tsx src/test-cross-client-sync.ts",
+    "test:all": "tsx src/test-runner.ts && tsx src/test-socket-runner.ts && tsx src/test-playback-runner.ts && tsx src/test-host-lifecycle-runner.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.0",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
