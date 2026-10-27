@@ -141,7 +141,7 @@ npm run test:rest --workspace=server
 | Component | Platform | Root Directory | Build Command | Start Command / Output Directory | Key Environment Variables |
 |---|---|---|---|---|---|
 | **Frontend** | Vercel | `client` | `npm run build` | `dist` | `VITE_BACKEND_URL`, `VITE_SOCKET_URL` |
-| **Backend** | Render | *(leave blank / root)* | `npm ci && npm run build:server` | `npm run start:server` | `NODE_ENV=production`, `PORT=10000`, `DATABASE_URL`, `CLIENT_URL` |
+| **Backend** | Render | *(leave blank / root)* | `npm ci --include=dev && npm run build:server` | `npm run prisma:deploy && npm run start:server` | `NODE_ENV=production`, `PORT=10000`, `DATABASE_URL`, `CLIENT_URL` |
 | **Database** | Neon | *(serverless)* | — | Port 5432 / 6543 pooler | `DATABASE_URL` (SSL required) |
 
 ### 1. Database (Neon PostgreSQL)
@@ -164,16 +164,13 @@ npm run test:rest --workspace=server
    - **Root Directory:** *(leave completely blank / default root)*
    - **Runtime:** `Node`
    - **Build Command:** `npm ci --include=dev && npm run build:server`
-   - **Start Command:** `npm run start:server`
+   - **Start Command:** `npm run prisma:deploy && npm run start:server`
 3. Configure Environment Variables:
    - `NODE_ENV`: `production`
    - `DATABASE_URL`: `postgresql://<user>:<password>@<neon-host>-pooler.tech/neondb?sslmode=require`
    - `CLIENT_URL`: `https://<your-vercel-app>.vercel.app` (supports comma-separated origins)
 4. Set **Health Check Path**: `/api/health`.
-5. Pre-Deploy / Migration Step: In the Render dashboard, under **Settings > Pre-Deploy Command**, enter:
-   ```bash
-   npm run prisma:deploy
-   ```
+5. Pre-Deploy Command: *(Leave blank on Render Free Tier; migrations run automatically via `startCommand` above).*
 
 ### 3. Frontend (Vercel)
 1. Import this Git repository into **Vercel**.

@@ -4,8 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm ci --include=dev && npm run build:server
-    startCommand: npm run start:server
-    preDeployCommand: npm run prisma:deploy
+    startCommand: npm run prisma:deploy && npm run start:server
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
