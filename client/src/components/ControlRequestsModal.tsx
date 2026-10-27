@@ -31,11 +31,32 @@ export const ControlRequestsModal: React.FC<ControlRequestsModalProps> = ({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
   const isPrivileged = userRole === 'HOST' || userRole === 'MODERATOR';
   const pendingRequests = requests.filter((r) => r.status === 'PENDING');
+
+  const handleApprove = async (id: string) => {
+    if (resolvingId) return;
+    setResolvingId(id);
+    try {
+      await onApproveRequest(id);
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    if (resolvingId) return;
+    setResolvingId(id);
+    try {
+      await onRejectRequest(id);
+    } finally {
+      setResolvingId(null);
+    }
+  };
 
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,18 +160,20 @@ export const ControlRequestsModal: React.FC<ControlRequestsModalProps> = ({
 
                       <div className="request-item-actions">
                         <button
-                          onClick={() => onRejectRequest(req.id)}
+                          onClick={() => handleReject(req.id)}
+                          disabled={resolvingId === req.id}
                           className="btn-danger btn-sm"
                           id={`reject-req-${req.id}`}
                         >
-                          Reject
+                          {resolvingId === req.id ? '...' : 'Reject'}
                         </button>
                         <button
-                          onClick={() => onApproveRequest(req.id)}
+                          onClick={() => handleApprove(req.id)}
+                          disabled={resolvingId === req.id}
                           className="btn-success btn-sm"
                           id={`approve-req-${req.id}`}
                         >
-                          Approve
+                          {resolvingId === req.id ? 'Approving...' : 'Approve'}
                         </button>
                       </div>
                     </div>
@@ -168,7 +191,51 @@ export const ControlRequestsModal: React.FC<ControlRequestsModalProps> = ({
               <div className="form-group">
                 <label className="form-label">Action to Request</label>
                 <div className="action-type-selector">
-                  {(['PLAY', 'PAUSE', 'SEEK', 'CHANGE_VIDEO'] as RequestType[]).map((type) => {
+                  {(
+                    [
+                      {
+                        type: 'PLAY' as RequestType,
+                        label: 'Play',
+                        icon: (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: 'PAUSE' as RequestType,
+                        label: 'Pause',
+                        icon: (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="4" width="4" height="16" />
+                            <rect x="14" y="4" width="4" height="16" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: 'SEEK' as RequestType,
+                        label: 'Seek',
+                        icon: (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <polygon points="13 19 22 12 13 5 13 19" />
+                            <polygon points="2 19 11 12 2 5 2 19" />
+                          </svg>
+                        ),
+                      },
+                      {
+                        type: 'CHANGE_VIDEO' as RequestType,
+                        label: 'Change Video',
+                        icon: (
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18" />
+                            <line x1="7" y1="2" x2="7" y2="22" />
+                            <line x1="17" y1="2" x2="17" y2="22" />
+                            <line x1="2" y1="12" x2="22" y2="12" />
+                          </svg>
+                        ),
+                      },
+                    ]
+                  ).map(({ type, label, icon }) => {
                     const isDisabled = !hasVideoSelected && type !== 'CHANGE_VIDEO';
                     return (
                       <button
@@ -178,7 +245,8 @@ export const ControlRequestsModal: React.FC<ControlRequestsModalProps> = ({
                         className={`action-selector-btn ${requestType === type ? 'selected' : ''}`}
                         onClick={() => setRequestType(type)}
                       >
-                        {type.replace('_', ' ')}
+                        {icon}
+                        <span>{label}</span>
                       </button>
                     );
                   })}

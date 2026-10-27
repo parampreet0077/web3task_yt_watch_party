@@ -176,17 +176,27 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
 
       // State 1: PLAYING
       if (state === 1) {
+        if (!playbackState?.isPlaying) {
+          // If authoritative room state is PAUSED, prevent unwanted autoplay or buffer transition
+          setProgrammaticUpdate(800);
+          pauseVideo();
+          return;
+        }
+
         if (isPrivileged) {
-          if (!playbackState?.isPlaying) {
-            // Privileged user initiated play via YouTube player click/shortcut
-            setProgrammaticUpdate(800);
-            onPlay(currentTime);
-          }
+          // Privileged user initiated play via YouTube player click/shortcut
+          // Play state is already active in playbackState
         } else {
-          // Participant cannot start independent playback while room is paused
-          if (!playbackState?.isPlaying) {
-            setProgrammaticUpdate(500);
-            pauseVideo();
+          // Participant: ensure we match authoritative host playback position (handles mobile late-join autoplay race)
+          if (playbackState.isPlaying && playbackState.serverTime) {
+            const serverAgeSeconds = (Date.now() - playbackState.serverTime) / 1000;
+            const targetTime = playbackState.currentTimestamp + Math.max(0, serverAgeSeconds * playbackState.playbackRate);
+            const drift = Math.abs(currentTime - targetTime);
+            if (drift > 1.2) {
+              setProgrammaticUpdate(800);
+              seekTo(targetTime, true);
+              setLocalTime(targetTime);
+            }
           }
         }
       }
@@ -293,16 +303,20 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
         }
       }
     } else {
-      setProgrammaticUpdate(800);
+      setProgrammaticUpdate(1200);
       pauseVideo();
       if (!isScrubbing) {
         const currentTime = getCurrentTime();
         const drift = Math.abs(currentTime - targetTime);
 
-        // Tight synchronization when paused: snap to authoritative target timestamp
-        if (drift > 0.3) {
+        // When paused: only seek if drift is noticeable (> 1.2s).
+        // Seeking for tiny sub-second drift while pausing can cancel the YouTube pause transition
+        if (drift > 1.2) {
           seekTo(targetTime, true);
           setLocalTime(targetTime);
+          setTimeout(() => {
+            pauseVideo();
+          }, 50);
         }
       }
     }
@@ -344,6 +358,32 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
       onPause(currentT);
     } else {
       onPlay(currentT);
+    }
+  };
+
+  const handleCenterPlayPauseClick = () => {
+    if (isPrivileged) {
+      togglePlayPause();
+    } else {
+      // Participant handling:
+      // If room is actively playing (e.g. mobile joining where autoplay was restricted),
+      // tapping center starts playback locally and immediately syncs drift to authoritative host time
+      if (playbackState?.isPlaying) {
+        setProgrammaticUpdate(800);
+        playVideo();
+        if (playbackState.serverTime) {
+          const serverAgeSeconds = (Date.now() - playbackState.serverTime) / 1000;
+          const targetTime = playbackState.currentTimestamp + Math.max(0, serverAgeSeconds * playbackState.playbackRate);
+          const currentTime = getCurrentTime();
+          if (Math.abs(currentTime - targetTime) > 1.0) {
+            seekTo(targetTime, true);
+            setLocalTime(targetTime);
+          }
+        }
+      } else {
+        // If room is paused, tapping center opens control requests modal
+        onOpenRequestsModal();
+      }
     }
   };
 
@@ -442,6 +482,37 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* Center Play/Pause Overlay Button */}
+            {isPlayerReady && !playerError && (
+              <button
+                type="button"
+                className={`center-play-pause-btn ${playbackState?.isPlaying ? 'is-playing' : 'is-paused'}`}
+                onClick={handleCenterPlayPauseClick}
+                aria-label={playbackState?.isPlaying ? 'Pause video' : 'Play video'}
+                title={
+                  isPrivileged
+                    ? playbackState?.isPlaying
+                      ? 'Pause'
+                      : 'Play'
+                    : playbackState?.isPlaying
+                    ? 'Request Pause'
+                    : 'Request Play / Start Playback'
+                }
+                id="center-play-pause-btn"
+              >
+                {playbackState?.isPlaying ? (
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                ) : (
+                  <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" style={{ marginLeft: 3 }}>
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                )}
+              </button>
             )}
           </div>
         )}
