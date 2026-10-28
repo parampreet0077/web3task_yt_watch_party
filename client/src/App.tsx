@@ -124,6 +124,7 @@ export default function App() {
 
   // Handle Room Creation
   const handleCreateRoom = async (displayName: string, title?: string) => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
@@ -148,6 +149,7 @@ export default function App() {
 
   // Handle Room Joining
   const handleJoinRoom = async (roomCode: string, displayName: string) => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setErrorMessage(null);
     try {

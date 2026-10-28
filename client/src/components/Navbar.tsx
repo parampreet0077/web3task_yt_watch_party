@@ -25,23 +25,24 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="navbar">
-      <div className="navbar-container">
+    <header className="navbar room-navbar">
+      <div className="navbar-container room-navbar-container">
         {/* Brand */}
-        <div className="brand">
+        <div className="brand room-brand">
           <div className="brand-icon" aria-hidden="true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>
           </div>
-          <div>
+          <div className="brand-text-container">
             <span className="brand-title">WatchParty</span>
-            {roomTitle && <span className="room-title-sub"> — {roomTitle}</span>}
+            {roomTitle && <span className="room-title-sub" title={roomTitle}> — {roomTitle}</span>}
           </div>
         </div>
 
         {/* Room Info & Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div className="room-header-controls">
+          <div className="room-badges-row">
           {roomCode && (
             <button
               onClick={copyRoomCode}
@@ -68,23 +69,26 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
 
           {roomCode && (
-            <>
-              <span className="participants-count-pill" title={`${participantCount} participant(s) in room`}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                </svg>
-                {participantCount}
-              </span>
-
-              <button onClick={onLeaveRoom} className="btn-secondary btn-sm" id="leave-room-btn">
-                Leave
-              </button>
-            </>
+            <span className="participants-count-pill" title={`${participantCount} participant(s) in room`}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <span>{participantCount}</span>
+            </span>
           )}
         </div>
+
+        {roomCode && (
+          <div className="room-leave-wrapper">
+            <button onClick={onLeaveRoom} className="btn-secondary btn-sm leave-room-btn" id="leave-room-btn" type="button">
+              Leave
+            </button>
+          </div>
+        )}
+      </div>
       </div>
     </header>
   );
