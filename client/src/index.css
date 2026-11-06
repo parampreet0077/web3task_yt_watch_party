@@ -1891,14 +1891,18 @@ button.action-selector-btn {
 @media (max-width: 768px) {
   .room-navbar-container {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
     grid-template-areas:
-      "brand leave"
-      "badges badges";
+      "brand theme leave"
+      "badges badges badges"
+      "actions actions actions";
     row-gap: 0.45rem;
-    column-gap: 0.75rem;
+    column-gap: 0.5rem;
     padding: 0.55rem 0.75rem;
     align-items: center;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .room-brand {
@@ -1930,10 +1934,24 @@ button.action-selector-btn {
     display: contents;
   }
 
+  .nav-theme-toggle {
+    grid-area: theme;
+    justify-self: end;
+  }
+
   .room-leave-wrapper {
     grid-area: leave;
     margin-left: 0;
     justify-self: end;
+  }
+
+  .navbar-v2-actions {
+    grid-area: actions;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    width: 100%;
+    margin-left: 0;
   }
 
   .leave-room-btn {
@@ -2211,10 +2229,20 @@ button.action-selector-btn {
 
 .search-tabs-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+  width: 100%;
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 0.5rem;
   margin-bottom: 0.75rem;
+}
+
+.search-tab-label-short {
+  display: none;
+}
+
+.search-tab-label-full {
+  display: inline;
 }
 
 .search-tab-btn {
@@ -2959,7 +2987,8 @@ button.action-selector-btn {
 .car-mode-container {
   display: flex;
   flex-direction: column;
-  width: 100vw;
+  width: 100%;
+  max-width: 100%;
   height: 100vh;
   height: 100dvh;
   max-height: 100dvh;
@@ -4679,17 +4708,21 @@ button.action-selector-btn {
   }
 
   .car-driver-bar {
-    gap: 0.5rem;
-    padding: 0.5rem 0.65rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+    padding: 0.45rem 0.5rem;
+    width: 100%;
+    max-width: 100%;
   }
 
   .car-driver-btn {
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 0.35rem;
     font-size: 0.8rem;
+    min-width: 0;
   }
 
   .car-driver-btn-playpause {
-    padding: 0.5rem 1.15rem;
+    padding: 0.5rem 0.35rem;
   }
 }
 
@@ -4742,9 +4775,30 @@ button.action-selector-btn {
 
 /* Standard Mobile (<= 480px) */
 @media (max-width: 480px) {
-  html, body {
-    overflow-x: hidden;
-    max-width: 100vw;
+  .search-tab-label-short {
+    display: inline;
+  }
+
+  .search-tab-label-full {
+    display: none;
+  }
+
+  .remote-url-input {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .remote-network-pills {
+    flex-wrap: wrap;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .remote-network-pill {
+    min-width: 0;
+    font-size: 0.68rem;
+    padding: 0.35rem 0.2rem;
   }
 
   .drawer-panel.queue-drawer-panel {
@@ -4820,24 +4874,36 @@ button.action-selector-btn {
   }
 
   .car-driver-bar {
-    gap: 0.35rem;
-    padding: 0.45rem 0.35rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.3rem;
+    padding: 0.35rem;
+    width: 100%;
+    max-width: 100%;
   }
 
   .car-driver-btn {
-    padding: 0.45rem 0.55rem;
+    padding: 0.45rem 0.25rem;
     font-size: 0.75rem;
-    gap: 0.3rem;
-    flex: 1;
+    gap: 0.25rem;
+    min-width: 0;
+    min-height: 44px;
   }
 
-  .car-driver-btn span {
+  .car-driver-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .car-driver-btn span,
+  .car-driver-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .car-driver-btn-playpause {
-    padding: 0.45rem 0.85rem;
-    flex: 1.25;
+    padding: 0.45rem 0.25rem;
   }
 
   .remote-queue-item {
@@ -4977,19 +5043,28 @@ button.action-selector-btn {
   }
 
   .car-driver-bar {
-    gap: 0.2rem;
-    padding: 0.35rem 0.2rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+    padding: 0.35rem 0.25rem;
+    width: 100%;
+    max-width: 100%;
   }
 
   .car-driver-btn {
-    padding: 0.4rem 0.3rem;
-    font-size: 0.7rem;
+    padding: 0.45rem 0.2rem;
+    font-size: 0.72rem;
     gap: 0.2rem;
+    min-width: 0;
+    min-height: 44px;
   }
 
   .car-driver-btn svg {
-    width: 15px;
-    height: 15px;
+    width: 16px;
+    height: 16px;
+  }
+
+  .car-driver-btn-playpause {
+    padding: 0.45rem 0.2rem;
   }
 
   .remote-sub-controls-row {
@@ -5080,6 +5155,59 @@ button.action-selector-btn {
 
   .remote-copy-btn {
     min-height: 40px;
+  }
+}
+
+/* Compact Narrow Screens (<= 360px down to 320px) */
+@media (max-width: 360px) {
+  .car-driver-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    padding: 0.4rem 0.35rem;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .car-driver-btn {
+    padding: 0.5rem 0.35rem;
+    font-size: 0.775rem;
+    gap: 0.3rem;
+    min-height: 44px;
+    min-width: 0;
+  }
+
+  .car-driver-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .car-driver-btn-playpause {
+    padding: 0.5rem 0.35rem;
+  }
+
+  .car-passenger-inline-item {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .car-passenger-info-left {
+    width: 100%;
+  }
+
+  .car-passenger-info-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .queue-item-controls {
+    display: grid;
+    grid-template-columns: repeat(2, 26px);
+    gap: 3px;
+  }
+
+  .queue-ctrl-btn {
+    width: 26px;
+    height: 26px;
   }
 }
 
@@ -5215,11 +5343,12 @@ button.action-selector-btn {
 /* CAR MODE DRIVER QUICK CONTROLS BAR                   */
 /* ---------------------------------------------------- */
 .car-driver-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  gap: 0.65rem;
+  padding: 0.5rem 0.85rem;
   background: rgba(17, 24, 39, 0.85);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -5227,6 +5356,8 @@ button.action-selector-btn {
   flex-shrink: 0;
   margin-top: 0;
   min-height: 52px;
+  width: 100%;
+  max-width: 100%;
   box-sizing: border-box;
 }
 
@@ -5234,18 +5365,33 @@ button.action-selector-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
+  gap: 0.35rem;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
   border-radius: var(--radius-md);
-  padding: 0.55rem 1.1rem;
+  padding: 0.55rem 0.65rem;
   font-size: 0.85rem;
   font-weight: 600;
   min-height: 44px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   cursor: pointer;
   transition: all 0.18s ease;
   user-select: none;
+}
+
+.car-driver-btn svg {
+  flex-shrink: 0;
+}
+
+.car-driver-btn span,
+.car-driver-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .car-driver-btn:hover:not(:disabled) {
@@ -5263,7 +5409,7 @@ button.action-selector-btn {
   background: #f59e0b;
   color: #0f172a;
   border-color: #f59e0b;
-  padding: 0.65rem 1.6rem;
+  padding: 0.55rem 0.65rem;
   font-weight: 700;
   box-shadow: 0 4px 14px rgba(245, 158, 11, 0.3);
 }
@@ -6722,4 +6868,472 @@ button.action-selector-btn {
 
 [data-theme='light'] .toast-close:hover {
   color: #0f172a;
+}
+
+/* ---------------------------------------------------- */
+/* HOMEPAGE CAR MODE FEATURE & SHOWCASE STYLES          */
+/* ---------------------------------------------------- */
+
+/* Featured Card in Features Grid */
+.feature-card.feature-card-highlighted {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, rgba(118, 88, 232, 0.08) 0%, rgba(27, 29, 39, 0.95) 100%);
+  border: 1px solid rgba(118, 88, 232, 0.35);
+  box-shadow: 0 8px 32px rgba(118, 88, 232, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.feature-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.feature-icon-car {
+  background: rgba(118, 88, 232, 0.2);
+  color: #a78bfa;
+  border: 1px solid rgba(118, 88, 232, 0.4);
+}
+
+.feature-card-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.25rem 0.65rem;
+  background: rgba(118, 88, 232, 0.18);
+  border: 1px solid rgba(118, 88, 232, 0.35);
+  color: #c4b5fd;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+}
+
+.feature-highlights-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0.85rem 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.65rem 1.25rem;
+}
+
+.feature-highlights-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.feature-highlights-list strong {
+  color: var(--text-primary);
+}
+
+.feature-check-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.18);
+  color: #10b981;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.feature-card-action {
+  margin-top: 0.25rem;
+}
+
+.feature-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+}
+
+/* Dedicated Car Mode Showcase Section */
+.car-mode-showcase-section {
+  background: linear-gradient(180deg, #111218 0%, #15161e 100%);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 4.5rem 1.5rem;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.car-mode-section-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(118, 88, 232, 0.16);
+  border: 1px solid rgba(118, 88, 232, 0.35);
+  color: #c4b5fd;
+}
+
+.car-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 2.5rem 0 2rem 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.car-workflow-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.car-workflow-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent-primary);
+}
+
+.workflow-step-num {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--accent-primary);
+  opacity: 0.9;
+}
+
+.workflow-step-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.workflow-step-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* Architecture & Safety Card */
+.car-safety-notice-card {
+  background: rgba(27, 29, 39, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem;
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.car-safety-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.safety-icon-wrapper {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(118, 88, 232, 0.16);
+  border: 1px solid rgba(118, 88, 232, 0.3);
+  color: #a78bfa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.safety-card-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.safety-card-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.15rem;
+}
+
+.car-safety-points-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem 1.5rem;
+}
+
+.safety-point {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.safety-point strong {
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.safety-point-full {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.85rem;
+}
+
+.car-showcase-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+.car-showcase-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.85rem 2rem;
+  font-size: 1rem;
+  font-weight: 700;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 18px rgba(118, 88, 232, 0.35);
+}
+
+/* Modal Car Mode Checkbox Choice */
+.car-mode-choice-group {
+  margin: 1rem 0;
+  padding: 0.75rem 0.85rem;
+  background: rgba(118, 88, 232, 0.08);
+  border: 1px solid rgba(118, 88, 232, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.car-mode-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.car-mode-checkbox {
+  margin-top: 0.25rem;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.car-mode-checkbox-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.car-mode-checkbox-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.car-mode-checkbox-sub {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+/* Responsive Car Mode Showcase Grid */
+@media (max-width: 1024px) {
+  .car-workflow-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .car-mode-showcase-section {
+    padding: 3rem 1rem;
+  }
+
+  .car-workflow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .car-safety-points-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
+  .feature-highlights-list {
+    grid-template-columns: 1fr;
+  }
+
+  .car-safety-notice-card {
+    padding: 1.25rem;
+  }
+
+  .car-showcase-cta {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .car-workflow-grid {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+  }
+
+  .car-workflow-card {
+    padding: 1rem 0.85rem;
+  }
+
+  .feature-card.feature-card-highlighted {
+    padding: 1.15rem 0.85rem;
+  }
+}
+
+/* ---------------------------------------------------- */
+/* LIGHT THEME TOKENS FOR CAR HOMEPAGE PROMOTION        */
+/* ---------------------------------------------------- */
+[data-theme='light'] .feature-card.feature-card-highlighted {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.06) 0%, #ffffff 100%);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  box-shadow: 0 4px 20px rgba(124, 58, 237, 0.08);
+}
+
+[data-theme='light'] .feature-icon-car {
+  background: rgba(124, 58, 237, 0.1);
+  color: #6d28d9;
+  border: 1px solid rgba(124, 58, 237, 0.25);
+}
+
+[data-theme='light'] .feature-card-badge {
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.3);
+  color: #6d28d9;
+}
+
+[data-theme='light'] .feature-highlights-list li {
+  color: #475569;
+}
+
+[data-theme='light'] .feature-highlights-list strong {
+  color: #0f172a;
+}
+
+[data-theme='light'] .feature-check-icon {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+
+[data-theme='light'] .car-mode-showcase-section {
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+[data-theme='light'] .car-mode-section-badge {
+  background: rgba(124, 58, 237, 0.08);
+  border: 1px solid rgba(124, 58, 237, 0.25);
+  color: #6d28d9;
+}
+
+[data-theme='light'] .car-workflow-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='light'] .car-workflow-card:hover {
+  border-color: #7c3aed;
+  box-shadow: 0 4px 16px rgba(124, 58, 237, 0.1);
+}
+
+[data-theme='light'] .workflow-step-num {
+  color: #7c3aed;
+}
+
+[data-theme='light'] .workflow-step-title {
+  color: #0f172a;
+}
+
+[data-theme='light'] .workflow-step-desc {
+  color: #64748b;
+}
+
+[data-theme='light'] .car-safety-notice-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme='light'] .safety-icon-wrapper {
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.25);
+  color: #6d28d9;
+}
+
+[data-theme='light'] .safety-card-title {
+  color: #0f172a;
+}
+
+[data-theme='light'] .safety-card-subtitle {
+  color: #64748b;
+}
+
+[data-theme='light'] .safety-point {
+  color: #475569;
+}
+
+[data-theme='light'] .safety-point strong {
+  color: #0f172a;
+}
+
+[data-theme='light'] .safety-point-full {
+  border-top: 1px solid #e2e8f0;
+}
+
+[data-theme='light'] .car-mode-choice-group {
+  background: rgba(124, 58, 237, 0.06);
+  border: 1px solid rgba(124, 58, 237, 0.2);
+}
+
+[data-theme='light'] .car-mode-checkbox-title {
+  color: #0f172a;
+}
+
+[data-theme='light'] .car-mode-checkbox-sub {
+  color: #64748b;
 }

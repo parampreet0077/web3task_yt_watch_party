@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ThemeToggle } from './ThemeToggle';
 
 interface LandingPageProps {
-  onCreateRoom: (displayName: string, title?: string) => Promise<void>;
+  onCreateRoom: (displayName: string, title?: string, initialMode?: 'standard' | 'car') => Promise<void>;
   onJoinRoom: (roomCode: string, displayName: string, inviteToken?: string) => Promise<void>;
   isLoading: boolean;
   errorMessage: string | null;
@@ -24,6 +24,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [roomTitle, setRoomTitle] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [inviteToken, setInviteToken] = useState<string>('');
+  const [launchInCarMode, setLaunchInCarMode] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -48,6 +49,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
   const openCreateModal = () => {
     setModalTab('create');
+    setLaunchInCarMode(false);
+    setValidationError(null);
+    onClearError();
+    setIsModalOpen(true);
+    setMobileMenuOpen(false);
+  };
+
+  const openCreateModalWithMode = (mode: 'standard' | 'car') => {
+    setModalTab('create');
+    setLaunchInCarMode(mode === 'car');
     setValidationError(null);
     onClearError();
     setIsModalOpen(true);
@@ -83,7 +94,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       setValidationError('Display name must be 40 characters or less');
       return;
     }
-    await onCreateRoom(trimmedName, roomTitle.trim() || undefined);
+    await onCreateRoom(trimmedName, roomTitle.trim() || undefined, launchInCarMode ? 'car' : 'standard');
   };
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
@@ -142,6 +153,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               How It Works
             </button>
             <button
+              onClick={() => scrollToSection('car-mode')}
+              className="landing-nav-link"
+              id="nav-car-mode-btn"
+            >
+              Car Mode
+            </button>
+            <button
               onClick={() => scrollToSection('features')}
               className="landing-nav-link"
               id="nav-features-btn"
@@ -197,6 +215,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="landing-mobile-menu">
             <button onClick={() => scrollToSection('how-it-works')} className="landing-mobile-link">
               How It Works
+            </button>
+            <button onClick={() => scrollToSection('car-mode')} className="landing-mobile-link">
+              Car Mode
             </button>
             <button onClick={() => scrollToSection('features')} className="landing-mobile-link">
               Features
@@ -394,6 +415,69 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           <div className="features-grid">
+            {/* Official Feature: Car Mode & Phone Remote */}
+            <div className="feature-card feature-card-highlighted">
+              <div className="feature-card-top">
+                <div className="feature-icon feature-icon-car">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9C2.1 11.1 2 11.5 2 12v4c0 .6.4 1 1 1h2" />
+                    <circle cx="7" cy="17" r="2" />
+                    <path d="M9 17h6" />
+                    <circle cx="17" cy="17" r="2" />
+                  </svg>
+                </div>
+                <span className="feature-card-badge">CAR INFOTAINMENT &amp; REMOTE</span>
+              </div>
+              <h3 className="feature-heading">Car Mode — Smart In-Car Watch Party</h3>
+              <p className="feature-description">
+                Turn your car screen into a shared entertainment dashboard. Connect your phone through QR and control YouTube playback remotely while passengers manage songs, recommendations and the shared queue.
+              </p>
+              <ul className="feature-highlights-list">
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Car Screen Host:</strong> Main screen acts as room Host; only the Car Screen plays actual video/audio.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Phone Remote Control:</strong> Connect phones using QR; control playback without repeatedly touching the car display.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>YouTube Music Search:</strong> Search videos, songs, and browse live recommendations.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Shared Queue &amp; Auto-Next:</strong> Add, remove, and reorder upcoming videos with automatic playback progression.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Multi-Phone Support:</strong> Multiple passenger phones can control the queue as Moderators simultaneously.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Passenger Permissions:</strong> Host retains ultimate authority and manages Moderator and Participant roles.</span>
+                </li>
+                <li>
+                  <span className="feature-check-icon">✓</span>
+                  <span><strong>Day/Night Theme:</strong> Optimized high-contrast daytime and glare-free dark night interfaces.</span>
+                </li>
+              </ul>
+              <div className="feature-card-action">
+                <button
+                  type="button"
+                  className="btn-primary btn-sm feature-cta-btn"
+                  onClick={() => openCreateModalWithMode('car')}
+                  id="feature-try-car-mode-btn"
+                >
+                  <span>Try Car Mode</span>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                    <polyline points="12 5 19 12 12 19" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
             {/* Feature 1 */}
             <div className="feature-card">
               <div className="feature-icon">
@@ -482,6 +566,125 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <p className="feature-description">
                 Persistent cryptographic session tokens in browser storage. Refreshing the page immediately restores room and playback state.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 4.5. Dedicated Car Mode & Phone Remote Showcase Section */}
+      <section className="landing-section car-mode-showcase-section" id="car-mode">
+        <div className="landing-section-container">
+          <div className="section-header">
+            <div className="section-badge car-mode-section-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9C2.1 11.1 2 11.5 2 12v4c0 .6.4 1 1 1h2" />
+                <circle cx="7" cy="17" r="2" />
+                <path d="M9 17h6" />
+                <circle cx="17" cy="17" r="2" />
+              </svg>
+              <span>IN-CAR ENTERTAINMENT ARCHITECTURE</span>
+            </div>
+            <h2 className="section-title">How Car Mode &amp; Phone Remote Work</h2>
+            <p className="section-subtitle">
+              A driver-safe architecture designed for road trips. The vehicle screen streams audio and video while passenger phones manage the shared music queue.
+            </p>
+          </div>
+
+          {/* 5-Step Workflow Cards */}
+          <div className="car-workflow-grid">
+            <div className="car-workflow-card">
+              <div className="workflow-step-num">01</div>
+              <h3 className="workflow-step-title">Host Creates Car Room</h3>
+              <p className="workflow-step-desc">
+                The driver or passenger creates a Watch Party on the vehicle browser and enters Car Mode.
+              </p>
+            </div>
+
+            <div className="car-workflow-card">
+              <div className="workflow-step-num">02</div>
+              <h3 className="workflow-step-title">Open Remote QR Code</h3>
+              <p className="workflow-step-desc">
+                Host taps &ldquo;Phone Remote&rdquo; on the car dashboard to present a high-contrast scannable QR invitation.
+              </p>
+            </div>
+
+            <div className="car-workflow-card">
+              <div className="workflow-step-num">03</div>
+              <h3 className="workflow-step-title">Passengers Scan &amp; Join</h3>
+              <p className="workflow-step-desc">
+                Passengers point their smartphone camera at the car screen and join immediately with Moderator rights.
+              </p>
+            </div>
+
+            <div className="car-workflow-card">
+              <div className="workflow-step-num">04</div>
+              <h3 className="workflow-step-title">Remote Queue &amp; Control</h3>
+              <p className="workflow-step-desc">
+                Authorized phones search YouTube, browse suggestions, and manage the queue without touching the dash.
+              </p>
+            </div>
+
+            <div className="car-workflow-card">
+              <div className="workflow-step-num">05</div>
+              <h3 className="workflow-step-title">Single Authoritative Player</h3>
+              <p className="workflow-step-desc">
+                The car screen is the only device that plays video/audio, guaranteeing zero echo and zero double playback.
+              </p>
+            </div>
+          </div>
+
+          {/* Architecture & Driver Safety Notice Card */}
+          <div className="car-safety-notice-card">
+            <div className="car-safety-header">
+              <div className="safety-icon-wrapper">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="safety-card-title">Driver Safety &amp; Multi-Device Principles</h4>
+                <p className="safety-card-subtitle">Designed specifically for passenger collaboration and reduced driver distraction.</p>
+              </div>
+            </div>
+
+            <div className="car-safety-points-grid">
+              <div className="safety-point">
+                <strong>Controller, Not a Player:</strong>
+                <span>The Phone Remote interface contains zero video or audio players. It acts purely as a low-latency controller.</span>
+              </div>
+              <div className="safety-point">
+                <strong>Car Screen Remains Host:</strong>
+                <span>The vehicle screen retains ultimate room authority. The Host can promote, demote, or remove participants at any time.</span>
+              </div>
+              <div className="safety-point">
+                <strong>Multi-Phone Collaboration:</strong>
+                <span>Multiple passengers can scan the QR code and collaborate on the queue simultaneously.</span>
+              </div>
+              <div className="safety-point">
+                <strong>Driver Distraction Warning:</strong>
+                <span>Driver interaction should be minimized while driving. Video search and song queueing should be handled by passengers or while safely parked.</span>
+              </div>
+              <div className="safety-point safety-point-full">
+                <strong>Browser-Based Web App:</strong>
+                <span>Operates directly inside any standard modern vehicle or mobile browser with internet connectivity. Does not require or claim native Android Auto or Apple CarPlay application installation.</span>
+              </div>
+            </div>
+
+            <div className="car-showcase-actions">
+              <button
+                type="button"
+                className="btn-primary btn-lg car-showcase-cta"
+                onClick={() => openCreateModalWithMode('car')}
+                id="car-showcase-start-btn"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9C2.1 11.1 2 11.5 2 12v4c0 .6.4 1 1 1h2" />
+                  <circle cx="7" cy="17" r="2" />
+                  <path d="M9 17h6" />
+                  <circle cx="17" cy="17" r="2" />
+                </svg>
+                <span>Launch Watch Party in Car Mode</span>
+              </button>
             </div>
           </div>
         </div>
@@ -668,6 +871,34 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       maxLength={100}
                       disabled={isLoading}
                     />
+                  </div>
+
+                  {/* Optional Car Mode Toggle Checkbox */}
+                  <div className="form-group car-mode-choice-group">
+                    <label className="car-mode-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={launchInCarMode}
+                        onChange={(e) => setLaunchInCarMode(e.target.checked)}
+                        className="car-mode-checkbox"
+                        id="launch-in-car-mode-checkbox"
+                        disabled={isLoading}
+                      />
+                      <span className="car-mode-checkbox-content">
+                        <span className="car-mode-checkbox-title">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9C2.1 11.1 2 11.5 2 12v4c0 .6.4 1 1 1h2" />
+                            <circle cx="7" cy="17" r="2" />
+                            <path d="M9 17h6" />
+                            <circle cx="17" cy="17" r="2" />
+                          </svg>
+                          Launch directly in Car Mode
+                        </span>
+                        <span className="car-mode-checkbox-sub">
+                          Infotainment-optimized view. Video plays only on this screen; passengers control via Phone Remote QR.
+                        </span>
+                      </span>
+                    </label>
                   </div>
 
                   <div className="modal-footer" style={{ marginTop: '1.25rem' }}>

@@ -63,7 +63,9 @@ const roomRevocationCutoffs = new Map<string, number>();
  */
 export function generateModInviteToken(roomCode: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
-  const timestamp = Date.now().toString();
+  const cutoff = roomRevocationCutoffs.get(roomCode.toUpperCase()) || 0;
+  const now = Date.now();
+  const timestamp = Math.max(now, cutoff + 1).toString();
   const payload = `${roomCode.toUpperCase()}:${salt}:${timestamp}`;
   const signature = crypto.createHmac("sha256", INVITE_SECRET).update(payload).digest("hex");
   return `${salt}.${timestamp}.${signature}`;
@@ -90,7 +92,7 @@ export function verifyModInviteToken(roomCode: string, token: string): boolean {
 
   // Check revocation cutoff for this room
   const cutoff = roomRevocationCutoffs.get(roomCode.toUpperCase());
-  if (cutoff && timestamp < cutoff) {
+  if (cutoff && timestamp <= cutoff) {
     return false;
   }
 

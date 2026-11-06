@@ -195,7 +195,7 @@ export default function App() {
   }, [notify]);
 
   // Handle Room Creation
-  const handleCreateRoom = async (displayName: string, title?: string) => {
+  const handleCreateRoom = async (displayName: string, title?: string, initialMode: AppMode = 'standard') => {
     if (isSubmitting) return;
     setIsSubmitting(true);
     setErrorMessage(null);
@@ -207,11 +207,15 @@ export default function App() {
         participantId: res.participant.id,
         displayName: res.participant.displayName,
       });
-      // Creating a room MUST enter Standard Mode by default
-      setCurrentMode('standard');
+      // Set specified mode (defaults to Standard Mode unless user chose Car Mode)
+      setCurrentMode(initialMode);
       try {
         const url = new URL(window.location.href);
-        url.searchParams.delete('mode');
+        if (initialMode === 'car') {
+          url.searchParams.set('mode', 'car');
+        } else {
+          url.searchParams.delete('mode');
+        }
         window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
       } catch {}
       setRoom(res.room);

@@ -329,12 +329,12 @@ export const CarModeView: React.FC<CarModeViewProps> = ({
             />
           </div>
 
-          {/* Driver Touch Quick Bar (infotainment friendly) */}
+          {/* Driver Touch Quick Bar (infotainment friendly & responsive) */}
           {isPrivileged && (
             <div className="car-driver-bar" role="toolbar" aria-label="Driver playback controls">
               <button
                 type="button"
-                className="car-driver-btn"
+                className="car-driver-btn car-driver-btn-rewind"
                 onClick={() => handleDriverJumpDelta(-10)}
                 disabled={isDriverBusy || !currentVideoId}
                 title="Rewind 10 seconds"
@@ -343,7 +343,7 @@ export const CarModeView: React.FC<CarModeViewProps> = ({
                   <polyline points="1 4 1 10 7 10" />
                   <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                 </svg>
-                <span>-10s</span>
+                <span className="car-driver-btn-label">-10s</span>
               </button>
 
               <button
@@ -359,21 +359,21 @@ export const CarModeView: React.FC<CarModeViewProps> = ({
                       <rect x="6" y="4" width="4" height="16" rx="1" />
                       <rect x="14" y="4" width="4" height="16" rx="1" />
                     </svg>
-                    <span>Pause</span>
+                    <span className="car-driver-btn-label">Pause</span>
                   </>
                 ) : (
                   <>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span>Play</span>
+                    <span className="car-driver-btn-label">Play</span>
                   </>
                 )}
               </button>
 
               <button
                 type="button"
-                className="car-driver-btn"
+                className="car-driver-btn car-driver-btn-forward"
                 onClick={() => handleDriverJumpDelta(10)}
                 disabled={isDriverBusy || !currentVideoId}
                 title="Forward 10 seconds"
@@ -382,12 +382,12 @@ export const CarModeView: React.FC<CarModeViewProps> = ({
                   <polyline points="23 4 23 10 17 10" />
                   <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                 </svg>
-                <span>+10s</span>
+                <span className="car-driver-btn-label">+10s</span>
               </button>
 
               <button
                 type="button"
-                className="car-driver-btn"
+                className="car-driver-btn car-driver-btn-next"
                 onClick={handleDriverPlayNext}
                 disabled={isDriverBusy || upcomingQueue.length === 0}
                 title={upcomingQueue.length > 0 ? 'Skip to next song in queue' : 'No upcoming songs in queue'}
@@ -396,7 +396,9 @@ export const CarModeView: React.FC<CarModeViewProps> = ({
                   <path d="M5 4l10 8-10 8V4z" />
                   <rect x="17" y="4" width="3" height="16" rx="1" />
                 </svg>
-                <span>Next ({upcomingQueue.length})</span>
+                <span className="car-driver-btn-label">
+                  Next{upcomingQueue.length > 0 ? ` (${upcomingQueue.length})` : ''}
+                </span>
               </button>
             </div>
           )}
