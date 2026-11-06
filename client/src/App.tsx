@@ -20,13 +20,35 @@ import { LandingPage } from './components/LandingPage';
 import { CinematicPlayer } from './components/CinematicPlayer';
 import { ParticipantRoster } from './components/ParticipantRoster';
 import { ChangeVideoModal } from './components/ChangeVideoModal';
+import { YouTubeSearchModal } from './components/YouTubeSearchModal';
+import { QueueDrawer } from './components/QueueDrawer';
+import { CarModeView } from './components/CarModeView';
+import { PhoneRemoteView } from './components/PhoneRemoteView';
+import { RemoteQRModal } from './components/RemoteQRModal';
 import { ControlRequestsModal } from './components/ControlRequestsModal';
 import { RoleRequestPopup } from './components/RoleRequestPopup';
 import { Toast } from './components/Toast';
 import './index.css';
 import './landing.css';
 
+type AppMode = 'standard' | 'car' | 'remote';
+
 export default function App() {
+  // Mode State derived from URL query parameter
+  const getInitialMode = (): AppMode => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const m = params.get('mode');
+      // Remote mode is preserved when joining via QR link
+      if (m === 'remote') return 'remote';
+      // Car mode is ONLY preserved when reconnecting/refreshing an active stored session
+      if (m === 'car' && getStoredRoomSession()) return 'car';
+    } catch {}
+    return 'standard';
+  };
+
+  const [currentMode, setCurrentMode] = useState<AppMode>(getInitialMode);
+
   // Session & Room State
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [currentParticipant, setCurrentParticipant] = useState<ParticipantData | null>(null);
@@ -39,7 +61,10 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastType, setToastType] = useState<'info' | 'success' | 'error'>('info');
 
-  // Modals
+  // Modals & Drawers
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const [isQueueDrawerOpen, setIsQueueDrawerOpen] = useState(false);
+  const [isRemoteQROpen, setIsRemoteQROpen] = useState(false);
   const [isChangeVideoModalOpen, setIsChangeVideoModalOpen] = useState(false);
   const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
 
@@ -54,6 +79,10 @@ export default function App() {
     setRoom(null);
     setCurrentParticipant(null);
     setSessionToken(null);
+    setCurrentMode('standard');
+    try {
+      window.history.replaceState(null, '', window.location.pathname);
+    } catch {}
     notify(reason, 'error');
   }, [notify]);
 
@@ -61,11 +90,26 @@ export default function App() {
     notify(msg, 'error');
   }, [notify]);
 
+  // Mode Switching
+  const handleToggleMode = (newMode: AppMode) => {
+    setCurrentMode(newMode);
+    try {
+      const url = new URL(window.location.href);
+      if (newMode === 'standard') {
+        url.searchParams.delete('mode');
+      } else {
+        url.searchParams.set('mode', newMode);
+      }
+      window.history.replaceState(null, '', url.toString());
+    } catch {}
+  };
+
   // Socket Hook
   const {
     isConnected,
     roster,
     playbackState,
+    queue,
     controlRequests,
     roleRequests,
     lastNotice,
@@ -79,6 +123,13 @@ export default function App() {
     rejectControlRequest,
     requestRole,
     resolveRoleRequest,
+    addToQueue,
+    removeFromQueue,
+    reorderQueue,
+    playNextInQueue,
+    clearQueue,
+    notifyVideoEnded,
+    syncVideoMetadata,
   } = useWatchPartySocket({
     roomCode: room?.code || null,
     sessionToken,
@@ -101,8 +152,29 @@ export default function App() {
       const stored = getStoredRoomSession();
       if (!stored) {
         setIsInitializing(false);
+        // Clean up any stale mode=car from URL if no active room session exists
+        try {
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('mode') === 'car') {
+            params.delete('mode');
+            const newQuery = params.toString();
+            window.history.replaceState(null, '', window.location.pathname + (newQuery ? `?${newQuery}` : ''));
+          }
+        } catch {}
         return;
       }
+
+      // If the URL explicitly requests a different room than what is stored,
+      // clear the stale session so the user can join the newly requested room.
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const requestedCode = (params.get('room') || params.get('code') || '').trim().toUpperCase();
+        if (requestedCode && requestedCode !== stored.roomCode) {
+          clearRoomSession();
+          setIsInitializing(false);
+          return;
+        }
+      } catch {}
 
       try {
         const data = await apiGetRoom(stored.roomCode, stored.token);
@@ -135,6 +207,13 @@ export default function App() {
         participantId: res.participant.id,
         displayName: res.participant.displayName,
       });
+      // Creating a room MUST enter Standard Mode by default
+      setCurrentMode('standard');
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+      } catch {}
       setRoom(res.room);
       setCurrentParticipant(res.participant);
       setSessionToken(res.sessionToken);
@@ -148,22 +227,35 @@ export default function App() {
   };
 
   // Handle Room Joining
-  const handleJoinRoom = async (roomCode: string, displayName: string) => {
+  const handleJoinRoom = async (roomCode: string, displayName: string, inviteToken?: string) => {
     if (isSubmitting) return;
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const res = await apiJoinRoom(roomCode, displayName);
+      const res = await apiJoinRoom(roomCode, displayName, inviteToken);
       saveRoomSession({
         roomCode: res.room.code,
         token: res.sessionToken,
         participantId: res.participant.id,
         displayName: res.participant.displayName,
       });
+      // If user had stale car mode in memory/URL, reset to standard unless in remote mode
+      if (currentMode === 'car') {
+        setCurrentMode('standard');
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('mode');
+          window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+        } catch {}
+      }
       setRoom(res.room);
       setCurrentParticipant(res.participant);
       setSessionToken(res.sessionToken);
-      notify(`Joined room ${res.room.code}!`, 'success');
+      if (res.participant.role === 'MODERATOR') {
+        notify(`Joined room ${res.room.code} as Moderator! Remote control active.`, 'success');
+      } else {
+        notify(`Joined room ${res.room.code}!`, 'success');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to join room';
       setErrorMessage(msg);
@@ -178,6 +270,11 @@ export default function App() {
     setRoom(null);
     setCurrentParticipant(null);
     setSessionToken(null);
+    setCurrentMode('standard');
+    try {
+      // Clean query parameters so landing page is pristine
+      window.history.replaceState(null, '', window.location.pathname);
+    } catch {}
     notify('You left the room.', 'info');
   };
 
@@ -279,26 +376,7 @@ export default function App() {
 
   return (
     <>
-      {room && (
-        <Navbar
-          roomCode={room.code}
-          roomTitle={room.title}
-          isConnected={isConnected}
-          participantCount={roster.length}
-          onLeaveRoom={handleLeaveRoom}
-        />
-      )}
-
-      {/* Real-time Role Request Popup (Host viewport top) */}
-      {room && (
-        <RoleRequestPopup
-          requests={pendingRoleRequests}
-          onApprove={handleApproveRoleRequest}
-          onReject={handleRejectRoleRequest}
-          onDismiss={handleDismissRoleRequest}
-        />
-      )}
-
+      {/* 1. Unauthenticated Landing Screen */}
       {!room ? (
         <LandingPage
           onCreateRoom={handleCreateRoom}
@@ -308,82 +386,232 @@ export default function App() {
           onClearError={() => setErrorMessage(null)}
         />
       ) : (
-        <main className="main-content">
-          <div className="watch-party-layout">
-            {/* Left Area: Video Player & Controls */}
-            <div className="player-column">
-              <CinematicPlayer
-                userRole={activeUserRole}
-                playbackState={playbackState}
-                pendingRequestsCount={pendingRequestsCount}
-                onPlay={playVideo}
-                onPause={pauseVideo}
-                onSeek={seekVideo}
-                onSetRate={setPlaybackRate}
-                onOpenChangeVideoModal={() => setIsChangeVideoModalOpen(true)}
-                onOpenRequestsModal={() => setIsRequestsModalOpen(true)}
-              />
-            </div>
+        <>
+          {/* 2. Room Navbar (Visible in Standard Mode) */}
+          {currentMode === 'standard' && (
+            <Navbar
+              roomCode={room.code}
+              roomTitle={room.title}
+              isConnected={isConnected}
+              participantCount={roster.length}
+              currentMode={currentMode}
+              queueCount={queue.filter((i) => i.status === 'QUEUED').length}
+              userRole={activeUserRole}
+              onLeaveRoom={handleLeaveRoom}
+              onToggleMode={handleToggleMode}
+              onOpenQueue={() => setIsQueueDrawerOpen(true)}
+              onOpenSearch={() => setIsSearchModalOpen(true)}
+              onOpenRemoteQR={() => setIsRemoteQROpen(true)}
+            />
+          )}
 
-            {/* Right Area: Participant Roster */}
-            <aside className="roster-column">
-              <ParticipantRoster
-                participants={roster}
-                currentUserId={currentParticipant?.id || ''}
-                currentUserRole={activeUserRole}
-                onUpdateRole={handleUpdateRole}
-                onRemoveParticipant={handleRemoveParticipant}
-                onTransferHost={handleTransferHost}
-                onRequestModerator={activeUserRole === 'PARTICIPANT' ? handleRequestModerator : undefined}
-              />
-            </aside>
-          </div>
-        </main>
+          {/* Real-time Role Request Popup (Host viewport top) */}
+          <RoleRequestPopup
+            requests={pendingRoleRequests}
+            onApprove={handleApproveRoleRequest}
+            onReject={handleRejectRoleRequest}
+            onDismiss={handleDismissRoleRequest}
+          />
+
+          {/* 3. MODE: CAR MODE */}
+          {currentMode === 'car' && (
+            <CarModeView
+              roomCode={room.code}
+              roomTitle={room.title}
+              userRole={activeUserRole}
+              playbackState={playbackState}
+              queue={queue}
+              roster={roster}
+              currentUserId={currentParticipant?.id}
+              sessionToken={sessionToken}
+              onExitCarMode={() => handleToggleMode('standard')}
+              onOpenSearch={() => setIsSearchModalOpen(true)}
+              onOpenQueue={() => setIsQueueDrawerOpen(true)}
+              onOpenRemoteQR={() => setIsRemoteQROpen(true)}
+              onPlay={playVideo}
+              onPause={pauseVideo}
+              onSeek={seekVideo}
+              onSetRate={setPlaybackRate}
+              onPlayNext={playNextInQueue}
+              onPlayRecommendation={async (videoId, meta) => {
+                const success = await changeVideo(videoId, meta);
+                if (success) {
+                  notify('Now playing suggested track!', 'success');
+                }
+                return success;
+              }}
+              onAddToQueue={async (item) => {
+                const res = await addToQueue(item);
+                if (res.success) {
+                  notify('Added song to shared queue!', 'success');
+                }
+                return res;
+              }}
+              onVideoEnded={notifyVideoEnded}
+              onMetadataDiscovered={syncVideoMetadata}
+              onUpdateRole={handleUpdateRole}
+              onRemoveParticipant={handleRemoveParticipant}
+              onTransferHost={handleTransferHost}
+            />
+          )}
+
+          {/* 4. MODE: PHONE REMOTE (Zero video players mounted) */}
+          {currentMode === 'remote' && (
+            <PhoneRemoteView
+              roomCode={room.code}
+              roomTitle={room.title}
+              userRole={activeUserRole}
+              playbackState={playbackState}
+              queue={queue}
+              sessionToken={sessionToken}
+              onExitRemoteMode={() => handleToggleMode('standard')}
+              onOpenSearch={() => setIsSearchModalOpen(true)}
+              onOpenQueue={() => setIsQueueDrawerOpen(true)}
+              onPlay={playVideo}
+              onPause={pauseVideo}
+              onSeek={seekVideo}
+              onSetRate={setPlaybackRate}
+              onPlayNext={playNextInQueue}
+              onPlayRecommendation={async (videoId, meta) => {
+                const success = await changeVideo(videoId, meta);
+                if (success) {
+                  notify('Playing track on Car Screen!', 'success');
+                }
+                return success;
+              }}
+              onRemoveItem={removeFromQueue}
+              onReorderItem={reorderQueue}
+              onRequestModerator={activeUserRole === 'PARTICIPANT' ? handleRequestModerator : undefined}
+            />
+          )}
+
+          {/* 5. MODE: STANDARD WATCH PARTY */}
+          {currentMode === 'standard' && (
+            <main className="main-content">
+              <div className="watch-party-layout">
+                {/* Left Area: Video Player & Controls */}
+                <div className="player-column">
+                  <CinematicPlayer
+                    userRole={activeUserRole}
+                    playbackState={playbackState}
+                    pendingRequestsCount={pendingRequestsCount}
+                    onPlay={playVideo}
+                    onPause={pauseVideo}
+                    onSeek={seekVideo}
+                    onSetRate={setPlaybackRate}
+                    onOpenChangeVideoModal={() => setIsSearchModalOpen(true)}
+                    onOpenRequestsModal={() => setIsRequestsModalOpen(true)}
+                    onVideoEnded={notifyVideoEnded}
+                    onMetadataDiscovered={syncVideoMetadata}
+                  />
+                </div>
+
+                {/* Right Area: Participant Roster */}
+                <aside className="roster-column">
+                  <ParticipantRoster
+                    participants={roster}
+                    currentUserId={currentParticipant?.id || ''}
+                    currentUserRole={activeUserRole}
+                    onUpdateRole={handleUpdateRole}
+                    onRemoveParticipant={handleRemoveParticipant}
+                    onTransferHost={handleTransferHost}
+                    onRequestModerator={activeUserRole === 'PARTICIPANT' ? handleRequestModerator : undefined}
+                  />
+                </aside>
+              </div>
+            </main>
+          )}
+
+          {/* 6. YouTube Search Modal (Host / Moderator) */}
+          <YouTubeSearchModal
+            isOpen={isSearchModalOpen}
+            onClose={() => setIsSearchModalOpen(false)}
+            roomCode={room.code}
+            sessionToken={sessionToken || ''}
+            userRole={activeUserRole}
+            onAddToQueue={addToQueue}
+            onPlayNow={async (videoId) => {
+              const success = await changeVideo(videoId);
+              if (success) {
+                notify('Video loaded for the room!', 'success');
+              }
+              return success;
+            }}
+          />
+
+          {/* 7. Shared Queue Drawer */}
+          <QueueDrawer
+            isOpen={isQueueDrawerOpen}
+            onClose={() => setIsQueueDrawerOpen(false)}
+            queue={queue}
+            currentVideoId={playbackState?.currentVideoId}
+            userRole={activeUserRole}
+            onOpenSearch={() => {
+              setIsQueueDrawerOpen(false);
+              setIsSearchModalOpen(true);
+            }}
+            onRemoveItem={removeFromQueue}
+            onReorderItem={reorderQueue}
+            onPlayNext={playNextInQueue}
+            onClearQueue={clearQueue}
+          />
+
+          {/* 8. Connect Phone Remote QR Modal */}
+          <RemoteQRModal
+            isOpen={isRemoteQROpen}
+            onClose={() => setIsRemoteQROpen(false)}
+            roomCode={room.code}
+            sessionToken={sessionToken}
+            isHost={activeUserRole === 'HOST'}
+            participantCount={roster.length}
+            isConnected={isConnected}
+          />
+
+          {/* 9. Direct Link Change Video Modal (Fallback) */}
+          <ChangeVideoModal
+            isOpen={isChangeVideoModalOpen}
+            onClose={() => setIsChangeVideoModalOpen(false)}
+            onSubmitVideo={async (videoId) => {
+              const success = await changeVideo(videoId);
+              if (success) {
+                notify('Video loaded for the room!', 'success');
+              }
+              return success;
+            }}
+          />
+
+          {/* 10. Control Requests Modal */}
+          <ControlRequestsModal
+            isOpen={isRequestsModalOpen}
+            onClose={() => setIsRequestsModalOpen(false)}
+            userRole={activeUserRole}
+            requests={controlRequests}
+            hasVideoSelected={Boolean(playbackState?.currentVideoId)}
+            currentTimestamp={playbackState?.currentTimestamp || 0}
+            onSubmitRequest={async (type: RequestType, ts?: number, vid?: string) => {
+              const res = await createControlRequest(type, ts, vid);
+              if (res.success) {
+                notify(`Playback request (${type}) submitted!`, 'success');
+              }
+              return res;
+            }}
+            onApproveRequest={async (id) => {
+              const success = await approveControlRequest(id);
+              if (success) {
+                notify('Request approved and executed!', 'success');
+              }
+              return success;
+            }}
+            onRejectRequest={async (id) => {
+              const success = await rejectControlRequest(id);
+              if (success) {
+                notify('Request rejected', 'info');
+              }
+              return success;
+            }}
+          />
+        </>
       )}
-
-      {/* Change Video Modal (Host / Moderator) */}
-      <ChangeVideoModal
-        isOpen={isChangeVideoModalOpen}
-        onClose={() => setIsChangeVideoModalOpen(false)}
-        onSubmitVideo={async (videoId) => {
-          const success = await changeVideo(videoId);
-          if (success) {
-            notify('Video loaded for the room!', 'success');
-          }
-          return success;
-        }}
-      />
-
-      {/* Control Requests Modal */}
-      <ControlRequestsModal
-        isOpen={isRequestsModalOpen}
-        onClose={() => setIsRequestsModalOpen(false)}
-        userRole={activeUserRole}
-        requests={controlRequests}
-        hasVideoSelected={Boolean(playbackState?.currentVideoId)}
-        currentTimestamp={playbackState?.currentTimestamp || 0}
-        onSubmitRequest={async (type: RequestType, ts?: number, vid?: string) => {
-          const res = await createControlRequest(type, ts, vid);
-          if (res.success) {
-            notify(`Playback request (${type}) submitted!`, 'success');
-          }
-          return res;
-        }}
-        onApproveRequest={async (id) => {
-          const success = await approveControlRequest(id);
-          if (success) {
-            notify('Request approved and executed!', 'success');
-          }
-          return success;
-        }}
-        onRejectRequest={async (id) => {
-          const success = await rejectControlRequest(id);
-          if (success) {
-            notify('Request rejected', 'info');
-          }
-          return success;
-        }}
-      />
 
       {/* Toast Notification */}
       <Toast

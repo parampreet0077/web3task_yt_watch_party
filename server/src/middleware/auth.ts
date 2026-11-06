@@ -65,3 +65,24 @@ export function requireHost(
   }
   next();
 }
+
+/**
+ * Middleware ensuring the authenticated participant possesses the HOST or MODERATOR role.
+ */
+export function requireHostOrModerator(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void {
+  if (
+    !req.participant ||
+    (req.participant.role !== "HOST" && req.participant.role !== "MODERATOR")
+  ) {
+    res.status(403).json({
+      error: "Forbidden",
+      message: "Only the Room Host or a Moderator is authorized to perform this action",
+    });
+    return;
+  }
+  next();
+}

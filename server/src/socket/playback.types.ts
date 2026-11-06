@@ -12,6 +12,17 @@ export interface SafePlaybackState {
   lastSyncAt: string;
   serverTime: number;
   syncToken?: string;
+  videoTitle?: string | null;
+  channelTitle?: string | null;
+  thumbnailUrl?: string | null;
+  durationSec?: number | null;
+}
+
+export interface PlaybackMetadata {
+  videoTitle?: string | null;
+  channelTitle?: string | null;
+  thumbnailUrl?: string | null;
+  durationSec?: number | null;
 }
 
 /**
@@ -64,7 +75,8 @@ export function toSafePlaybackState(
     playbackRate: number;
     lastSyncAt: Date;
   },
-  syncToken?: string
+  syncToken?: string,
+  metadata?: PlaybackMetadata | null
 ): SafePlaybackState {
   const currentTimestamp = computeCurrentPlaybackTimestamp(
     room.currentTimestamp,
@@ -81,6 +93,12 @@ export function toSafePlaybackState(
     lastSyncAt: room.lastSyncAt.toISOString(),
     serverTime: Date.now(),
     ...(syncToken ? { syncToken } : {}),
+    ...(metadata?.videoTitle ? { videoTitle: metadata.videoTitle } : {}),
+    ...(metadata?.channelTitle ? { channelTitle: metadata.channelTitle } : {}),
+    ...(metadata?.thumbnailUrl ? { thumbnailUrl: metadata.thumbnailUrl } : {}),
+    ...(typeof metadata?.durationSec === "number" && metadata.durationSec > 0
+      ? { durationSec: metadata.durationSec }
+      : {}),
   };
 }
 

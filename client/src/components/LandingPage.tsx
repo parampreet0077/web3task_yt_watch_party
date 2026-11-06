@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { ThemeToggle } from './ThemeToggle';
 
 interface LandingPageProps {
   onCreateRoom: (displayName: string, title?: string) => Promise<void>;
-  onJoinRoom: (roomCode: string, displayName: string) => Promise<void>;
+  onJoinRoom: (roomCode: string, displayName: string, inviteToken?: string) => Promise<void>;
   isLoading: boolean;
   errorMessage: string | null;
   onClearError: () => void;
@@ -22,14 +23,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [displayName, setDisplayName] = useState('');
   const [roomTitle, setRoomTitle] = useState('');
   const [roomCode, setRoomCode] = useState('');
+  const [inviteToken, setInviteToken] = useState<string>('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Preserve query parameter behaviour (?room=CODE or ?code=CODE)
+  // Preserve query parameter behaviour (?room=CODE or ?code=CODE, and ?invite=TOKEN)
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const urlCode = params.get('room') || params.get('code');
+      const urlInvite = params.get('invite') || params.get('inviteToken');
+      if (urlInvite && urlInvite.trim().length > 0) {
+        setInviteToken(urlInvite.trim());
+      }
       if (urlCode && urlCode.trim().length > 0) {
         setRoomCode(urlCode.trim().toUpperCase());
         setModalTab('join');
@@ -100,7 +106,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       return;
     }
 
-    await onJoinRoom(trimmedCode, trimmedName);
+    await onJoinRoom(trimmedCode, trimmedName, inviteToken || undefined);
   };
 
   const scrollToSection = (id: string) => {
@@ -146,6 +152,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           {/* Desktop Action CTAs */}
           <div className="landing-nav-actions">
+            <ThemeToggle className="landing-theme-toggle" />
             <button
               onClick={() => openJoinModal()}
               className="btn-secondary"
@@ -711,6 +718,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               {/* Join Form */}
               {modalTab === 'join' && (
                 <form onSubmit={handleJoinSubmit} className="modal-body" id="landing-join-room-form">
+                  {inviteToken && (
+                    <div className="landing-mod-invite-banner">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                      </svg>
+                      <span>Joining as Room Moderator via Car Screen QR</span>
+                    </div>
+                  )}
+
                   <div className="form-group">
                     <label htmlFor="join-room-code-input" className="form-label">
                       6-Character Room Code

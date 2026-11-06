@@ -4,8 +4,9 @@ import type {
   GetRoomResponse,
   Role,
 } from '../types/room';
+import { resolveBackendUrl } from '../utils/env';
 
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000').replace(/\/+$/, '');
+const BACKEND_URL = resolveBackendUrl();
 
 export class ApiError extends Error {
   statusCode: number;
@@ -60,10 +61,31 @@ export async function createRoom(displayName: string, title?: string): Promise<C
   });
 }
 
-export async function joinRoom(roomCode: string, displayName: string): Promise<JoinRoomResponse> {
+export async function joinRoom(
+  roomCode: string,
+  displayName: string,
+  inviteToken?: string
+): Promise<JoinRoomResponse> {
   return request<JoinRoomResponse>(`/api/rooms/${roomCode.trim().toUpperCase()}/join`, {
     method: 'POST',
-    body: JSON.stringify({ displayName: displayName.trim() }),
+    body: JSON.stringify({
+      displayName: displayName.trim(),
+      ...(inviteToken ? { inviteToken: inviteToken.trim() } : {}),
+    }),
+  });
+}
+
+export async function getModInviteToken(
+  roomCode: string,
+  sessionToken: string,
+  revoke = false
+): Promise<{ roomCode: string; inviteToken: string; expiresInSeconds: number }> {
+  const url = `/api/rooms/${roomCode.trim().toUpperCase()}/mod-invite${revoke ? '?revoke=true' : ''}`;
+  return request<{ roomCode: string; inviteToken: string; expiresInSeconds: number }>(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+    },
   });
 }
 
@@ -123,4 +145,100 @@ export async function transferHostRole(
 
 export async function checkBackendHealth(): Promise<{ status: string }> {
   return request<{ status: string }>('/api/health', { method: 'GET' });
+}
+
+export interface YouTubeSearchResult {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  durationSec: number;
+  durationFormatted: string;
+}
+
+export interface YouTubeSearchResponse {
+  query: string;
+  count: number;
+  cached: boolean;
+  results: YouTubeSearchResult[];
+}
+
+/**
+ * Searches YouTube videos via the room-authorized backend proxy.
+ * Available only to Host and Moderator.
+ */
+export async function searchYouTubeVideos(
+  roomCode: string,
+  query: string,
+  sessionToken: string
+): Promise<YouTubeSearchResponse> {
+  return request<YouTubeSearchResponse>(
+    `/api/rooms/${roomCode.trim().toUpperCase()}/search?q=${encodeURIComponent(query.trim())}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+      },
+    }
+  );
+}
+
+export interface YouTubeRecommendationsResponse {
+  success: boolean;
+  count: number;
+  recommendations: Array<{
+    videoId: string;
+    title: string;
+    channelTitle: string;
+    thumbnailUrl: string;
+    durationSec: number;
+    durationFormatted: string;
+    description?: string;
+  }>;
+}
+
+/**
+ * Fetches YouTube video recommendations related to the current playing video.
+ * Accessible to all room participants.
+ */
+export async function getYouTubeRecommendations(
+  roomCode: string,
+  sessionToken: string,
+  options?: { videoId?: string; title?: string; channel?: string; limit?: number }
+): Promise<YouTubeRecommendationsResponse> {
+  const params = new URLSearchParams();
+  if (options?.videoId) params.set('videoId', options.videoId);
+  if (options?.title) params.set('title', options.title);
+  if (options?.channel) params.set('channel', options.channel);
+  if (options?.limit) params.set('limit', String(options.limit));
+
+  const queryStr = params.toString() ? `?${params.toString()}` : '';
+  return request<YouTubeRecommendationsResponse>(
+    `/api/rooms/${roomCode.trim().toUpperCase()}/recommendations${queryStr}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+      },
+    }
+  );
+}
+
+/**
+ * Retrieves detailed metadata for a YouTube video via the backend proxy.
+ */
+export async function getVideoDetails(
+  roomCode: string,
+  sessionToken: string,
+  videoId: string
+): Promise<{ success: boolean; details: any }> {
+  return request<{ success: boolean; details: any }>(
+    `/api/rooms/${roomCode.trim().toUpperCase()}/video-details?videoId=${encodeURIComponent(videoId.trim())}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+      },
+    }
+  );
 }

@@ -4,6 +4,28 @@ export type RequestType = 'PLAY' | 'PAUSE' | 'SEEK' | 'CHANGE_VIDEO';
 
 export type RequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
+export type QueueStatus = 'QUEUED' | 'PLAYING' | 'PLAYED';
+
+export interface QueueItemData {
+  id: string;
+  roomId: string;
+  videoId: string;
+  title: string;
+  channelTitle: string | null;
+  thumbnailUrl: string | null;
+  durationSec: number;
+  durationFormatted: string;
+  position: number;
+  status: QueueStatus;
+  createdAt: string;
+  playedAt: string | null;
+  addedBy: {
+    id: string;
+    displayName: string;
+    role: Role;
+  };
+}
+
 export interface RoomData {
   id: string;
   code: string;
@@ -34,6 +56,20 @@ export interface SafePlaybackState {
   lastSyncAt: string;
   serverTime: number;
   syncToken?: string;
+  videoTitle?: string | null;
+  channelTitle?: string | null;
+  thumbnailUrl?: string | null;
+  durationSec?: number | null;
+}
+
+export interface YouTubeSuggestion {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  durationSec: number;
+  durationFormatted: string;
+  description?: string;
 }
 
 export interface SafeControlRequest {

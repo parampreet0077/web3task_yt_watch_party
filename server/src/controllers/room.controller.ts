@@ -1,13 +1,34 @@
 import type { Request, Response } from "express";
 import { Role } from "@prisma/client";
 import { prisma } from "../config/prisma.js";
-import { generateRoomCode, generateSessionToken, hashSessionToken } from "../utils/crypto.js";
+import {
+  generateRoomCode,
+  generateSessionToken,
+  hashSessionToken,
+  generateModInviteToken,
+  verifyModInviteToken,
+  revokeRoomModInvites,
+} from "../utils/crypto.js";
 import {
   handleParticipantRemoved,
   broadcastRosterUpdate,
   broadcastHostTransfer,
+  broadcastQueueUpdate,
 } from "../socket/room.handler.js";
 import type { AuthenticatedRequest } from "../types/auth.js";
+import {
+  searchYouTubeVideos,
+  getYouTubeRecommendations,
+  fetchVideoDetails,
+  YouTubeApiError,
+} from "../services/youtube.service.js";
+import {
+  getRoomQueue,
+  addQueueItem,
+  removeQueueItem,
+  reorderQueueItem,
+  QueueServiceError,
+} from "../services/queue.service.js";
 
 /**
  * Controller: Create a new Watch Party Room with an initial Host participant.
@@ -124,7 +145,7 @@ export async function createRoom(req: Request, res: Response): Promise<void> {
 export async function joinRoom(req: Request, res: Response): Promise<void> {
   try {
     const { code } = req.params;
-    const { displayName } = req.body;
+    const { displayName, inviteToken } = req.body;
 
     if (!code || typeof code !== "string" || code.trim().length === 0) {
       res.status(400).json({
@@ -147,9 +168,29 @@ export async function joinRoom(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const room = await prisma.room.findUnique({
-      where: { code: code.toUpperCase() },
-    });
+    // Fetch room with transient retry for Neon connection drops
+    let room: any = null;
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        room = await prisma.room.findUnique({
+          where: { code: code.toUpperCase() },
+        });
+        break;
+      } catch (err: any) {
+        attempts++;
+        if (
+          attempts < 3 &&
+          (err?.code === "P1001" ||
+            err?.message?.includes("Can't reach database") ||
+            err?.message?.includes("Closed"))
+        ) {
+          await new Promise((r) => setTimeout(r, 700));
+        } else {
+          throw err;
+        }
+      }
+    }
 
     if (!room) {
       res.status(404).json({
@@ -159,20 +200,51 @@ export async function joinRoom(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // Securely determine role based on valid room-scoped moderator invite token
+    let assignedRole: Role = Role.PARTICIPANT;
+    if (inviteToken && typeof inviteToken === "string") {
+      const isModInviteValid = verifyModInviteToken(room.code, inviteToken.trim());
+      if (isModInviteValid) {
+        assignedRole = Role.MODERATOR;
+        console.log(
+          `[joinRoom]: Assigning MODERATOR role to "${displayName.trim()}" in room ${room.code} via verified QR invite token.`
+        );
+      }
+    }
+
     // Generate cryptographic session token and its SHA-256 hash
     const rawSessionToken = generateSessionToken();
     const tokenHash = hashSessionToken(rawSessionToken);
 
-    // Persist new participant
-    const participant = await prisma.participant.create({
-      data: {
-        roomId: room.id,
-        displayName: displayName.trim(),
-        role: Role.PARTICIPANT,
-        tokenHash,
-        isConnected: false, // Truthful status: false until live WebSocket connection connects
-      },
-    });
+    // Persist new participant with transient retry
+    let participant: any = null;
+    attempts = 0;
+    while (attempts < 3) {
+      try {
+        participant = await prisma.participant.create({
+          data: {
+            roomId: room.id,
+            displayName: displayName.trim(),
+            role: assignedRole,
+            tokenHash,
+            isConnected: false, // Truthful status: false until live WebSocket connection connects
+          },
+        });
+        break;
+      } catch (err: any) {
+        attempts++;
+        if (
+          attempts < 3 &&
+          (err?.code === "P1001" ||
+            err?.message?.includes("Can't reach database") ||
+            err?.message?.includes("Closed"))
+        ) {
+          await new Promise((r) => setTimeout(r, 700));
+        } else {
+          throw err;
+        }
+      }
+    }
 
     res.status(201).json({
       room: {
@@ -361,6 +433,39 @@ export async function updateParticipantRole(
     res.status(500).json({
       error: "Internal Server Error",
       message: "An error occurred while updating participant role",
+    });
+  }
+}
+
+/**
+ * Controller: Generate/retrieve a secure moderator invite token for the Car Screen QR.
+ * GET /api/rooms/:code/mod-invite
+ * Requires Host authentication.
+ */
+export async function getModInviteTokenController(
+  req: AuthenticatedRequest,
+  res: Response
+): Promise<void> {
+  try {
+    const room = req.room!;
+    const shouldRevoke = req.query.revoke === "true";
+
+    if (shouldRevoke) {
+      revokeRoomModInvites(room.code);
+    }
+
+    const inviteToken = generateModInviteToken(room.code);
+
+    res.status(200).json({
+      roomCode: room.code,
+      inviteToken,
+      expiresInSeconds: 86400,
+    });
+  } catch (error) {
+    console.error("[getModInviteTokenController Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "Failed to generate moderator invite token",
     });
   }
 }
@@ -562,6 +667,282 @@ export async function transferHost(
     res.status(500).json({
       error: "Internal Server Error",
       message: "An unexpected error occurred while transferring host ownership",
+    });
+  }
+}
+
+/**
+ * Controller: Search YouTube videos via YouTube Data API v3.
+ * GET /api/rooms/:code/search?q=:query
+ * Requires Host or Moderator role.
+ */
+export async function searchVideos(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const query = typeof req.query.q === "string" ? req.query.q : "";
+    if (!query || query.trim().length === 0) {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "Search query parameter 'q' is required",
+      });
+      return;
+    }
+
+    const results = await searchYouTubeVideos(query);
+    res.status(200).json({
+      query: query.trim(),
+      results,
+      items: results,
+    });
+  } catch (error: any) {
+    if (error instanceof YouTubeApiError) {
+      res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    console.error("[searchVideos Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while searching YouTube",
+    });
+  }
+}
+
+/**
+ * Controller: Get the room's persistent video queue.
+ * GET /api/rooms/:code/queue
+ * Accessible to all room participants.
+ */
+export async function getQueue(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const room = req.room!;
+    const queue = await getRoomQueue(room.id);
+    res.status(200).json({ queue });
+  } catch (error: any) {
+    console.error("[getQueue Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An error occurred while fetching the room queue",
+    });
+  }
+}
+
+/**
+ * Controller: Add a video to the room's persistent queue.
+ * POST /api/rooms/:code/queue
+ * Requires Host or Moderator role.
+ */
+export async function addToQueue(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const room = req.room!;
+    const participant = req.participant!;
+    const { videoId, title, channelTitle, thumbnailUrl, durationSec, playNext } = req.body || {};
+
+    if (!videoId || typeof videoId !== "string") {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "videoId is required",
+      });
+      return;
+    }
+
+    const item = await addQueueItem(room.id, participant.id, {
+      videoId,
+      title,
+      channelTitle,
+      thumbnailUrl,
+      durationSec,
+      playNext: Boolean(playNext),
+    });
+
+    const updatedQueue = await getRoomQueue(room.id);
+    broadcastQueueUpdate(room.code, updatedQueue, "add", { item });
+
+    res.status(201).json({
+      success: true,
+      item,
+      queue: updatedQueue,
+    });
+  } catch (error: any) {
+    if (error instanceof QueueServiceError) {
+      res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    console.error("[addToQueue Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while adding to the queue",
+    });
+  }
+}
+
+/**
+ * Controller: Remove an item from the room queue.
+ * DELETE /api/rooms/:code/queue/:itemId
+ * Requires Host or Moderator role.
+ */
+export async function removeFromQueue(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const room = req.room!;
+    const itemId = typeof req.params.itemId === "string" ? req.params.itemId : "";
+
+    if (!itemId) {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "itemId parameter is required",
+      });
+      return;
+    }
+
+    await removeQueueItem(room.id, itemId);
+
+    const updatedQueue = await getRoomQueue(room.id);
+    broadcastQueueUpdate(room.code, updatedQueue, "remove", { itemId });
+
+    res.status(200).json({
+      success: true,
+      message: "Queue item successfully removed",
+      queue: updatedQueue,
+    });
+  } catch (error: any) {
+    if (error instanceof QueueServiceError) {
+      res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    console.error("[removeFromQueue Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while removing the queue item",
+    });
+  }
+}
+
+/**
+ * Controller: Reorder an item in the room queue.
+ * PATCH /api/rooms/:code/queue/reorder
+ * Requires Host or Moderator role.
+ */
+export async function reorderQueue(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const room = req.room!;
+    const { itemId, targetPosition } = req.body || {};
+
+    if (!itemId || typeof itemId !== "string") {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "itemId is required in request body",
+      });
+      return;
+    }
+
+    if (typeof targetPosition !== "number" || targetPosition < 1) {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "targetPosition must be a positive number",
+      });
+      return;
+    }
+
+    const updatedQueue = await reorderQueueItem(room.id, itemId, targetPosition);
+    broadcastQueueUpdate(room.code, updatedQueue, "reorder");
+
+    res.status(200).json({
+      success: true,
+      queue: updatedQueue,
+    });
+  } catch (error: any) {
+    if (error instanceof QueueServiceError) {
+      res.status(error.statusCode).json({
+        error: error.code,
+        message: error.message,
+      });
+      return;
+    }
+    console.error("[reorderQueue Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while reordering the queue",
+    });
+  }
+}
+
+/**
+ * Controller: Get video recommendations based on the currently playing or requested video.
+ * GET /api/rooms/:code/recommendations?videoId=...&title=...&channel=...&limit=...
+ * Accessible to all room participants.
+ */
+export async function getRecommendationsController(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const room = req.room!;
+    const videoId =
+      typeof req.query.videoId === "string" && req.query.videoId.trim().length > 0
+        ? req.query.videoId.trim()
+        : room.currentVideoId || undefined;
+
+    const title = typeof req.query.title === "string" ? req.query.title.trim() : undefined;
+    const channel = typeof req.query.channel === "string" ? req.query.channel.trim() : undefined;
+    const limitNum =
+      typeof req.query.limit === "string"
+        ? Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 20)
+        : 10;
+
+    const recommendations = await getYouTubeRecommendations(videoId, title, channel, limitNum);
+
+    res.status(200).json({
+      success: true,
+      count: recommendations.length,
+      recommendations,
+    });
+  } catch (error: any) {
+    console.error("[getRecommendations Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while fetching video recommendations",
+    });
+  }
+}
+
+/**
+ * Controller: Get video metadata details for a given YouTube video ID.
+ * GET /api/rooms/:code/video-details?videoId=...
+ * Accessible to all room participants.
+ */
+export async function getVideoDetailsController(req: AuthenticatedRequest, res: Response): Promise<void> {
+  try {
+    const videoId = typeof req.query.videoId === "string" ? req.query.videoId.trim() : "";
+    if (!videoId) {
+      res.status(400).json({
+        error: "Bad Request",
+        message: "videoId query parameter is required",
+      });
+      return;
+    }
+
+    const details = await fetchVideoDetails(videoId);
+    if (!details) {
+      res.status(404).json({
+        error: "Not Found",
+        message: "Could not retrieve details for this video",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      details,
+    });
+  } catch (error: any) {
+    console.error("[getVideoDetails Error]:", error);
+    res.status(500).json({
+      error: "Internal Server Error",
+      message: "An unexpected error occurred while fetching video details",
     });
   }
 }

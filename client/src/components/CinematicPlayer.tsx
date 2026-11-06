@@ -13,7 +13,23 @@ interface CinematicPlayerProps {
   onSetRate: (rate: number) => Promise<boolean>;
   onOpenChangeVideoModal: () => void;
   onOpenRequestsModal: () => void;
+  onVideoEnded?: (videoId: string) => void;
+  onMetadataDiscovered?: (meta: {
+    videoId: string;
+    durationSec: number;
+    title: string;
+    channelTitle: string;
+    thumbnailUrl: string;
+  }) => void;
 }
+
+const calculateProgressPercent = (time: number, dur: number): number => {
+  if (!Number.isFinite(dur) || dur <= 0) return 0;
+  if (!Number.isFinite(time) || time <= 0) return 0;
+  const pct = (time / dur) * 100;
+  if (!Number.isFinite(pct)) return 0;
+  return Math.min(100, Math.max(0, pct));
+};
 
 export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
   userRole,
@@ -25,6 +41,8 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
   onSetRate,
   onOpenChangeVideoModal,
   onOpenRequestsModal,
+  onVideoEnded,
+  onMetadataDiscovered,
 }) => {
   const isPrivileged = userRole === 'HOST' || userRole === 'MODERATOR';
   const containerId = 'youtube-iframe-container';
@@ -34,13 +52,29 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [needsUserGestureResume, setNeedsUserGestureResume] = useState(false);
+
+  const reportedMetaRef = useRef<string>('');
+  const hasReportedEndRef = useRef<string | null>(null);
 
   const activeVideoIdRef = useRef<string | null>(null);
   const playerWrapperRef = useRef<HTMLDivElement>(null);
+  const scrubberInputRef = useRef<HTMLInputElement>(null);
+  const progressFillRef = useRef<HTMLDivElement>(null);
+  const isScrubbingRef = useRef<boolean>(false);
+  const scrubValueRef = useRef<number>(0);
+  const durationRef = useRef<number>(0);
+  const lastSampledTimeRef = useRef<number>(0);
+  const lastSampledWallTimeRef = useRef<number>(0);
+  const lastDisplayedSecondRef = useRef<number>(-1);
+  const playerStateRef = useRef<number>(-1);
 
   // Echo suppression: prevent programmatic updates from firing secondary socket events back to server
   const isProgrammaticUpdateRef = useRef<boolean>(false);
   const programmaticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isUserInitiatedPauseRef = useRef<boolean>(false);
+  const isSeekingRef = useRef<boolean>(false);
+  const seekingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const toggleFullscreen = useCallback(async () => {
     const container = playerWrapperRef.current;
@@ -144,6 +178,7 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
     setPlaybackRate,
     getCurrentTime,
     getDuration,
+    getVideoData,
     setPlayerError,
   } = useYouTubeIframe({
     containerId,
@@ -152,11 +187,17 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
       // Sync immediately when player is ready
       if (playbackState?.currentVideoId) {
         activeVideoIdRef.current = playbackState.currentVideoId;
+        durationRef.current = 0;
+        setDuration(0);
         let targetTime = playbackState.currentTimestamp;
         if (playbackState.isPlaying && playbackState.serverTime) {
           const serverAgeSeconds = (Date.now() - playbackState.serverTime) / 1000;
           targetTime += Math.max(0, serverAgeSeconds * playbackState.playbackRate);
         }
+        lastSampledTimeRef.current = targetTime;
+        lastSampledWallTimeRef.current = performance.now();
+        lastDisplayedSecondRef.current = Math.floor(targetTime);
+        setLocalTime(targetTime);
 
         setProgrammaticUpdate(1000);
         if (playbackState.isPlaying) {
@@ -169,13 +210,18 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
       }
     },
     onStateChange: (state: number) => {
-      // Echo suppression: ignore events triggered programmatically by incoming server state
-      if (isProgrammaticUpdateRef.current) return;
-
+      playerStateRef.current = state;
       const currentTime = getCurrentTime();
+      lastSampledTimeRef.current = currentTime;
+      lastSampledWallTimeRef.current = performance.now();
 
       // State 1: PLAYING
       if (state === 1) {
+        isSeekingRef.current = false;
+        isUserInitiatedPauseRef.current = false;
+        setNeedsUserGestureResume(false);
+        console.log(`[CinematicPlayer:Diagnostic]: YouTube Player state: PLAYING (1) at ${currentTime.toFixed(2)}s`);
+
         if (!playbackState?.isPlaying) {
           // If authoritative room state is PAUSED, prevent unwanted autoplay or buffer transition
           setProgrammaticUpdate(800);
@@ -183,19 +229,24 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
           return;
         }
 
-        if (isPrivileged) {
-          // Privileged user initiated play via YouTube player click/shortcut
-          // Play state is already active in playbackState
-        } else {
-          // Participant: ensure we match authoritative host playback position (handles mobile late-join autoplay race)
+        if (!isPrivileged) {
+          // Participant: ensure we match authoritative host playback position
           if (playbackState.isPlaying && playbackState.serverTime) {
-            const serverAgeSeconds = (Date.now() - playbackState.serverTime) / 1000;
-            const targetTime = playbackState.currentTimestamp + Math.max(0, serverAgeSeconds * playbackState.playbackRate);
+            const targetTime = playbackState.currentTimestamp;
             const drift = Math.abs(currentTime - targetTime);
-            if (drift > 1.2) {
-              setProgrammaticUpdate(800);
+            if (drift > 2.0 && !isScrubbingRef.current) {
+              setProgrammaticUpdate(1200);
               seekTo(targetTime, true);
               setLocalTime(targetTime);
+              lastSampledTimeRef.current = targetTime;
+              lastSampledWallTimeRef.current = performance.now();
+              lastDisplayedSecondRef.current = Math.floor(targetTime);
+              if (progressFillRef.current) {
+                progressFillRef.current.style.width = `${calculateProgressPercent(targetTime, durationRef.current)}%`;
+              }
+              if (scrubberInputRef.current && !isScrubbingRef.current) {
+                scrubberInputRef.current.value = String(targetTime);
+              }
             }
           }
         }
@@ -203,32 +254,58 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
 
       // State 2: PAUSED
       else if (state === 2) {
-        if (isPrivileged) {
-          if (playbackState?.isPlaying) {
-            // Privileged user initiated pause via YouTube player click/shortcut
-            setProgrammaticUpdate(800);
-            onPause(currentTime);
-          }
-        } else {
-          // Participant cannot pause while room is actively playing
-          if (playbackState?.isPlaying) {
-            setProgrammaticUpdate(500);
-            playVideo();
+        const isDocHidden = typeof document !== 'undefined' && document.hidden;
+        const isProgrammatic = isProgrammaticUpdateRef.current || isSeekingRef.current;
+        const isRoomPlaying = Boolean(playbackState?.isPlaying);
+
+        console.log(
+          `[CinematicPlayer:Diagnostic]: YouTube Player state: PAUSED (2) at ${currentTime.toFixed(2)}s | roomPlaying=${isRoomPlaying} | docHidden=${isDocHidden} | programmatic=${isProgrammatic}`
+        );
+
+        // Echo suppression: ignore programmatic pauses (e.g. from seek or initial cue)
+        if (isProgrammatic) {
+          return;
+        }
+
+        // Background throttle protection: Chromium pauses background tab iframes.
+        // NEVER broadcast pause to the room or attempt infinite force-play loops while tab is hidden!
+        if (isDocHidden) {
+          return;
+        }
+
+        // If the room is actively playing, user paused gestures are already handled directly by UI buttons.
+        // An unexpected state 2 from YouTube indicates buffering stall or focus drop: re-synchronize without pausing room.
+        if (isRoomPlaying) {
+          setProgrammaticUpdate(800);
+          try {
+            const res: any = playVideo();
+            if (res && typeof res.catch === 'function') {
+              res.catch(() => {
+                setNeedsUserGestureResume(true);
+              });
+            }
+          } catch {
+            setNeedsUserGestureResume(true);
           }
         }
       }
 
-      // State 3: BUFFERING while paused (prevent autoplay on buffer complete)
+      // State 3: BUFFERING (Never interpret as user pause)
       else if (state === 3) {
+        console.log('[CinematicPlayer:Diagnostic]: YouTube Player state: BUFFERING (3)');
         if (playbackState && !playbackState.isPlaying) {
           pauseVideo();
         }
       }
 
-      // State 0: ENDED
-      else if (state === 0 && isPrivileged && playbackState?.isPlaying) {
-        setProgrammaticUpdate(800);
-        onPause(getDuration() || currentTime);
+      // State 0: ENDED (Auto-advance to next video in queue)
+      else if (state === 0) {
+        console.log(`[CinematicPlayer:Diagnostic]: YouTube Player state: ENDED (0) for ${playbackState?.currentVideoId}`);
+        setProgrammaticUpdate(3000);
+        if (playbackState?.currentVideoId && hasReportedEndRef.current !== playbackState.currentVideoId) {
+          hasReportedEndRef.current = playbackState.currentVideoId;
+          onVideoEnded?.(playbackState.currentVideoId);
+        }
       }
     },
     onError: (_code, message) => {
@@ -236,23 +313,130 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
     },
   });
 
-  // Track video duration and current time tick for smooth scrubber display
+  // Track video duration and continuously update smooth progress bar fill at 60fps
   useEffect(() => {
     if (!isPlayerReady || !playbackState?.currentVideoId) return;
 
-    const interval = setInterval(() => {
-      if (!isScrubbing) {
-        const time = getCurrentTime();
-        setLocalTime(time);
-        const dur = getDuration();
-        if (dur > 0 && dur !== duration) {
-          setDuration(dur);
+    let animId: number;
+
+    const tick = () => {
+      // 1. Discover or update duration if newly available
+      const dur = getDuration();
+      if (dur > 0 && dur !== durationRef.current) {
+        durationRef.current = dur;
+        setDuration(dur);
+      }
+
+      if (dur > 0 && playbackState?.currentVideoId) {
+        const metaKey = `${playbackState.currentVideoId}:${Math.floor(dur)}`;
+        if (reportedMetaRef.current !== metaKey) {
+          reportedMetaRef.current = metaKey;
+          const vData = getVideoData();
+          onMetadataDiscovered?.({
+            videoId: playbackState.currentVideoId,
+            durationSec: Math.floor(dur),
+            title: vData?.title || playbackState.videoTitle || 'YouTube Video',
+            channelTitle: vData?.author || playbackState.channelTitle || 'YouTube',
+            thumbnailUrl:
+              playbackState.thumbnailUrl ||
+              `https://img.youtube.com/vi/${playbackState.currentVideoId}/mqdefault.jpg`,
+          });
         }
       }
-    }, 250);
 
-    return () => clearInterval(interval);
-  }, [isPlayerReady, playbackState?.currentVideoId, isScrubbing, getCurrentTime, getDuration, duration]);
+      const currentDur = durationRef.current;
+      const isRoomPlaying = Boolean(playbackState?.isPlaying);
+      const isPlayerPlaying =
+        playerStateRef.current === 1 ||
+        (playerStateRef.current !== 2 && playerStateRef.current !== 3 && isRoomPlaying);
+
+      if (!isScrubbingRef.current) {
+        let currentTime = lastSampledTimeRef.current;
+
+        if (playerStateRef.current === 0 && currentDur > 0) {
+          // Video ended: clamp to full duration
+          currentTime = currentDur;
+        } else if (isRoomPlaying && isPlayerPlaying) {
+          // Video is playing: sample actual YouTube player time
+          const ytTime = getCurrentTime();
+          const now = performance.now();
+
+          // When YouTube reports an updated clock tick, update our anchor
+          if (Math.abs(ytTime - lastSampledTimeRef.current) > 0.05) {
+            lastSampledTimeRef.current = ytTime;
+            lastSampledWallTimeRef.current = now;
+          }
+
+          // Smoothly interpolate between YouTube ticks using display refresh rate
+          const elapsedSec = (now - lastSampledWallTimeRef.current) / 1000;
+          const currentRate = playbackState?.playbackRate || 1;
+          const boundedElapsed = Math.min(1.2, Math.max(0, elapsedSec * currentRate));
+          currentTime = lastSampledTimeRef.current + boundedElapsed;
+
+          if (currentDur > 0) {
+            currentTime = Math.min(currentDur, currentTime);
+          }
+
+          // Fallback auto-next detection: YouTube frequently stops within 0.4s of end without firing State 0
+          if (
+            currentDur > 5 &&
+            currentTime >= currentDur - 0.4 &&
+            isRoomPlaying &&
+            playbackState?.currentVideoId &&
+            hasReportedEndRef.current !== playbackState.currentVideoId
+          ) {
+            hasReportedEndRef.current = playbackState.currentVideoId;
+            console.log(
+              `[CinematicPlayer:Diagnostic]: Video reached end threshold (${currentTime.toFixed(2)}s / ${currentDur.toFixed(2)}s). Triggering auto-next.`
+            );
+            setProgrammaticUpdate(3000);
+            onVideoEnded?.(playbackState.currentVideoId);
+          }
+        } else {
+          // Paused, buffering, or idle: poll reported time without advancing
+          const ytTime = getCurrentTime();
+          if (ytTime > 0) {
+            currentTime = ytTime;
+            lastSampledTimeRef.current = ytTime;
+            lastSampledWallTimeRef.current = performance.now();
+          }
+        }
+
+        // Update progress bar fill directly on DOM (0 React re-renders)
+        const pct = calculateProgressPercent(currentTime, currentDur);
+        if (progressFillRef.current) {
+          progressFillRef.current.style.width = `${pct}%`;
+        }
+
+        // Update range slider input value so the thumb moves in exact lockstep
+        if (scrubberInputRef.current) {
+          scrubberInputRef.current.value = String(currentTime);
+        }
+
+        // Update React timestamp text state once per second
+        const currentSec = Math.floor(currentTime);
+        if (currentSec !== lastDisplayedSecondRef.current) {
+          lastDisplayedSecondRef.current = currentSec;
+          setLocalTime(currentTime);
+        }
+      }
+
+      animId = requestAnimationFrame(tick);
+    };
+
+    animId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [
+    isPlayerReady,
+    playbackState?.currentVideoId,
+    playbackState?.isPlaying,
+    playbackState?.playbackRate,
+    getCurrentTime,
+    getDuration,
+  ]);
 
   // Synchronize playback state changes from server (bounded drift correction & echo suppression)
   useEffect(() => {
@@ -263,9 +447,24 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
     // 1. Video Change
     if (targetVideoId !== activeVideoIdRef.current) {
       activeVideoIdRef.current = targetVideoId;
+      hasReportedEndRef.current = null;
+      setNeedsUserGestureResume(false);
+      durationRef.current = 0;
+      setDuration(0);
+      lastSampledTimeRef.current = playbackState.currentTimestamp || 0;
+      lastSampledWallTimeRef.current = performance.now();
+      lastDisplayedSecondRef.current = -1;
+      setLocalTime(playbackState.currentTimestamp || 0);
+      if (progressFillRef.current) {
+        progressFillRef.current.style.width = '0%';
+      }
+      if (scrubberInputRef.current) {
+        scrubberInputRef.current.value = '0';
+      }
+
       if (targetVideoId) {
         setPlayerError(null);
-        setProgrammaticUpdate(1000);
+        setProgrammaticUpdate(3000);
         if (playbackState.isPlaying) {
           loadVideoById(targetVideoId, playbackState.currentTimestamp);
           playVideo();
@@ -279,27 +478,44 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
 
     if (!targetVideoId) return;
 
-    // 2. Compute authoritative target time with network latency drift
+    // 2. Compute authoritative target time with bounded latency
     let targetTime = playbackState.currentTimestamp;
     if (playbackState.isPlaying && playbackState.serverTime) {
       const serverAgeSeconds = (Date.now() - playbackState.serverTime) / 1000;
-      targetTime += Math.max(0, serverAgeSeconds * playbackState.playbackRate);
+      if (serverAgeSeconds > 0 && serverAgeSeconds < 2.5) {
+        targetTime += serverAgeSeconds * playbackState.playbackRate;
+      }
     }
 
     // 3. Play / Pause & Timestamp synchronization
     setPlaybackRate(playbackState.playbackRate);
 
     if (playbackState.isPlaying) {
-      setProgrammaticUpdate(800);
+      setProgrammaticUpdate(1200);
       playVideo();
       if (!isScrubbing) {
         const currentTime = getCurrentTime();
         const drift = Math.abs(currentTime - targetTime);
 
-        // Bounded drift correction: seek only if drift exceeds 1.2s to prevent audio stutter
-        if (drift > 1.2) {
+        // Bounded drift correction: seek only if drift exceeds 1.8s and video has started
+        if (drift > 1.8 && currentTime > 0) {
+          isSeekingRef.current = true;
+          if (seekingTimerRef.current) clearTimeout(seekingTimerRef.current);
+          seekingTimerRef.current = setTimeout(() => {
+            isSeekingRef.current = false;
+          }, 2000);
+          setProgrammaticUpdate(1500);
           seekTo(targetTime, true);
           setLocalTime(targetTime);
+          lastSampledTimeRef.current = targetTime;
+          lastSampledWallTimeRef.current = performance.now();
+          lastDisplayedSecondRef.current = Math.floor(targetTime);
+          if (progressFillRef.current) {
+            progressFillRef.current.style.width = `${calculateProgressPercent(targetTime, durationRef.current)}%`;
+          }
+          if (scrubberInputRef.current && !isScrubbingRef.current) {
+            scrubberInputRef.current.value = String(targetTime);
+          }
         }
       }
     } else {
@@ -309,11 +525,19 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
         const currentTime = getCurrentTime();
         const drift = Math.abs(currentTime - targetTime);
 
-        // When paused: only seek if drift is noticeable (> 1.2s).
-        // Seeking for tiny sub-second drift while pausing can cancel the YouTube pause transition
-        if (drift > 1.2) {
+        // When paused: only seek if drift is noticeable (> 1.5s).
+        if (drift > 1.5) {
           seekTo(targetTime, true);
           setLocalTime(targetTime);
+          lastSampledTimeRef.current = targetTime;
+          lastSampledWallTimeRef.current = performance.now();
+          lastDisplayedSecondRef.current = Math.floor(targetTime);
+          if (progressFillRef.current) {
+            progressFillRef.current.style.width = `${calculateProgressPercent(targetTime, durationRef.current)}%`;
+          }
+          if (scrubberInputRef.current && !isScrubbingRef.current) {
+            scrubberInputRef.current.value = String(targetTime);
+          }
           setTimeout(() => {
             pauseVideo();
           }, 50);
@@ -338,28 +562,127 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
   // Scrubber events
   const handleScrubberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
+    if (!Number.isFinite(val)) return;
+    scrubValueRef.current = val;
     setScrubValue(val);
     setLocalTime(val);
-  };
 
-  const handleScrubberCommit = () => {
-    setIsScrubbing(false);
-    if (isPrivileged) {
-      setProgrammaticUpdate(800);
-      onSeek(scrubValue);
+    const pct = calculateProgressPercent(val, durationRef.current);
+    if (progressFillRef.current) {
+      progressFillRef.current.style.width = `${pct}%`;
     }
   };
 
-  const togglePlayPause = () => {
+  const handleScrubberCommit = useCallback(() => {
+    if (!isScrubbingRef.current) return;
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+
+    const seekTarget = scrubberInputRef.current ? parseFloat(scrubberInputRef.current.value) : scrubValueRef.current;
+    if (Number.isFinite(seekTarget)) {
+      lastSampledTimeRef.current = seekTarget;
+      lastSampledWallTimeRef.current = performance.now();
+      lastDisplayedSecondRef.current = Math.floor(seekTarget);
+      setLocalTime(seekTarget);
+
+      if (isPrivileged) {
+        setProgrammaticUpdate(800);
+        onSeek(seekTarget);
+      }
+    }
+  }, [isPrivileged, onSeek, setProgrammaticUpdate]);
+
+  // Global pointer up listener while scrubbing to commit even if released outside the input element
+  useEffect(() => {
+    if (!isScrubbing) return;
+
+    const handleGlobalPointerUp = () => {
+      handleScrubberCommit();
+    };
+
+    window.addEventListener('mouseup', handleGlobalPointerUp);
+    window.addEventListener('touchend', handleGlobalPointerUp);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalPointerUp);
+      window.removeEventListener('touchend', handleGlobalPointerUp);
+    };
+  }, [isScrubbing, handleScrubberCommit]);
+
+  const handleScrubberKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isPrivileged) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+      isScrubbingRef.current = true;
+      setIsScrubbing(true);
+    }
+  };
+
+  const handleScrubberKeyUp = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isPrivileged) return;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
+      handleScrubberCommit();
+    }
+  };
+
+  // Resume local playback when tab returns to foreground if room is playing
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && playbackState?.isPlaying && isPlayerReady) {
+        console.log('[CinematicPlayer]: Tab returned to foreground. Ensuring playback active.');
+        setProgrammaticUpdate(800);
+        playVideo();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [playbackState?.isPlaying, isPlayerReady, playVideo, setProgrammaticUpdate]);
+
+  const togglePlayPause = useCallback(() => {
     if (!isPrivileged) return;
     const currentT = getCurrentTime() || localTime;
     setProgrammaticUpdate(800);
     if (playbackState?.isPlaying) {
+      isUserInitiatedPauseRef.current = true;
       onPause(currentT);
     } else {
+      isUserInitiatedPauseRef.current = false;
       onPlay(currentT);
     }
-  };
+  }, [isPrivileged, getCurrentTime, localTime, setProgrammaticUpdate, playbackState?.isPlaying, onPause, onPlay]);
+
+  // Global keyboard shortcuts (Spacebar for Play/Pause)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' && e.key !== ' ') return;
+
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (activeEl) {
+        const tagName = activeEl.tagName.toLowerCase();
+        if (
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          activeEl.isContentEditable
+        ) {
+          return;
+        }
+      }
+
+      if (!isPrivileged || !playbackState?.currentVideoId) return;
+
+      e.preventDefault();
+      togglePlayPause();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPrivileged, playbackState?.currentVideoId, togglePlayPause]);
 
   const handleCenterPlayPauseClick = () => {
     if (isPrivileged) {
@@ -392,7 +715,7 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
 
   return (
     <div
-      className={`cinematic-wrapper ${isFullscreen ? 'is-fullscreen' : ''}`}
+      className={`cinematic-wrapper player-wrapper ${isFullscreen ? 'is-fullscreen' : ''}`}
       ref={playerWrapperRef}
       id="cinematic-player-wrapper"
     >
@@ -484,6 +807,24 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
               </div>
             )}
 
+            {/* Autoplay / Background Suspension Resume Badge */}
+            {needsUserGestureResume && isPlayerReady && !playerError && (
+              <button
+                type="button"
+                className="player-gesture-resume-badge"
+                onClick={() => {
+                  setNeedsUserGestureResume(false);
+                  setProgrammaticUpdate(1200);
+                  playVideo();
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+                <span>Tap to Resume Playback</span>
+              </button>
+            )}
+
             {/* Center Play/Pause Overlay Button */}
             {isPlayerReady && !playerError && (
               <button
@@ -523,20 +864,43 @@ export const CinematicPlayer: React.FC<CinematicPlayerProps> = ({
         <div className="player-control-bar" id="player-control-bar">
           {/* Scrubber slider */}
           <div className="scrubber-container">
+            <div className="scrubber-track">
+              <div
+                ref={progressFillRef}
+                className="scrubber-fill"
+                style={{
+                  width: `${calculateProgressPercent(displayTime, duration)}%`,
+                }}
+              />
+            </div>
             <input
+              ref={scrubberInputRef}
               type="range"
               min="0"
               max={duration > 0 ? duration : 100}
-              step="0.5"
-              value={displayTime}
+              step="any"
+              defaultValue={displayTime}
               disabled={!isPrivileged}
-              onMouseDown={() => setIsScrubbing(true)}
-              onTouchStart={() => setIsScrubbing(true)}
+              onMouseDown={() => {
+                isScrubbingRef.current = true;
+                setIsScrubbing(true);
+              }}
+              onTouchStart={() => {
+                isScrubbingRef.current = true;
+                setIsScrubbing(true);
+              }}
+              onKeyDown={handleScrubberKeyDown}
+              onKeyUp={handleScrubberKeyUp}
               onChange={handleScrubberChange}
               onMouseUp={handleScrubberCommit}
               onTouchEnd={handleScrubberCommit}
               className={`scrubber-input ${!isPrivileged ? 'scrubber-readonly' : ''}`}
               title={isPrivileged ? 'Seek to timestamp' : 'Playback position controlled by Host'}
+              aria-label="Video playback progress"
+              aria-valuemin={0}
+              aria-valuemax={duration > 0 ? duration : 100}
+              aria-valuenow={displayTime}
+              aria-valuetext={`${formatTime(displayTime)} of ${formatTime(duration)}`}
               id="player-scrubber"
             />
           </div>

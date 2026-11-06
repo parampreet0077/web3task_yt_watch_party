@@ -2,9 +2,11 @@ import type { Server as SocketIOServer, Socket } from "socket.io";
 import { prisma } from "../config/prisma.js";
 import { verifyParticipantSession } from "../services/auth.service.js";
 import { socketRegistry, type SocketMetadata } from "./registry.js";
-import { registerPlaybackHandlers } from "./playback.handler.js";
+import { registerPlaybackHandlers, getRoomPlaybackMetadata } from "./playback.handler.js";
 import { registerRequestHandlers } from "./request.handler.js";
+import { registerQueueHandlers } from "./queue.handler.js";
 import { toSafePlaybackState, type SafePlaybackState } from "./playback.types.js";
+import { getRoomQueue, type SafeQueueItem } from "../services/queue.service.js";
 import type { Role } from "@prisma/client";
 
 export interface SafeParticipant {
@@ -171,9 +173,10 @@ export function setupSocketIO(io: SocketIOServer): void {
       socket.emit("pong", { timestamp: Date.now() });
     });
 
-    // Register Authoritative Playback and Control Request Handlers
+    // Register Authoritative Playback, Queue, and Control Request Handlers
     registerPlaybackHandlers(socket, io);
     registerRequestHandlers(socket, io);
+    registerQueueHandlers(socket, io);
 
     // Event: Join authorized room
     socket.on(
@@ -185,6 +188,7 @@ export function setupSocketIO(io: SocketIOServer): void {
           error?: string;
           roster?: SafeParticipant[];
           playback?: SafePlaybackState | null;
+          queue?: SafeQueueItem[];
         }) => void
       ) => {
         try {
@@ -264,12 +268,15 @@ export function setupSocketIO(io: SocketIOServer): void {
           const room = await prisma.room.findUnique({
             where: { id: session.roomId },
           });
-          const playback = room ? toSafePlaybackState(room) : null;
+          const playback = room ? toSafePlaybackState(room, undefined, getRoomPlaybackMetadata(session.roomId)) : null;
+
+          // Fetch current authoritative room queue
+          const queue = await getRoomQueue(session.roomId);
 
           // Broadcast roster update to all room members
           io.to(roomChannel).emit("room:roster", { participants: roster });
 
-          // Send confirmation back to joining socket with roster and current playback state
+          // Send confirmation back to joining socket with roster, current playback state, and queue
           socket.emit("room:joined", {
             roomCode: session.roomCode,
             participant: {
@@ -280,10 +287,11 @@ export function setupSocketIO(io: SocketIOServer): void {
             },
             roster,
             playback,
+            queue,
           });
 
           if (typeof ack === "function") {
-            ack({ success: true, roster, playback });
+            ack({ success: true, roster, playback, queue });
           }
         } catch (error) {
           console.error("[room:join Error]:", error);
@@ -734,4 +742,22 @@ export async function broadcastHostTransfer(
 
   const roster = await getSafeRoster(roomId);
   ioInstance.to(roomChannel).emit("room:roster", { participants: roster });
+}
+
+/**
+ * Broadcasts an updated queue snapshot to all members of a room channel.
+ */
+export function broadcastQueueUpdate(
+  roomCode: string,
+  queue: SafeQueueItem[],
+  action?: string,
+  meta?: Record<string, any>
+): void {
+  if (!ioInstance) return;
+  const roomChannel = getRoomChannel(roomCode);
+  ioInstance.to(roomChannel).emit("queue:updated", {
+    queue,
+    action,
+    ...meta,
+  });
 }

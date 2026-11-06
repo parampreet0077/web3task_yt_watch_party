@@ -5,19 +5,37 @@ import {
   toSafePlaybackState,
   computeCurrentPlaybackTimestamp,
   type SafePlaybackState,
+  type PlaybackMetadata,
 } from "./playback.types.js";
 import {
   extractYouTubeVideoId,
   isValidTimestamp,
   isValidPlaybackRate,
 } from "../utils/youtube.js";
+import {
+  advanceQueueOnVideoEnd,
+  type SafeQueueItem,
+} from "../services/queue.service.js";
+import { fetchVideoDetails } from "../services/youtube.service.js";
+
+/** In-memory cache for room video metadata (title, channel, duration, thumbnail) */
+const roomMetadataCache = new Map<string, PlaybackMetadata>();
+
+export function getRoomPlaybackMetadata(roomId: string): PlaybackMetadata | null {
+  return roomMetadataCache.get(roomId) || null;
+}
+
+export function setRoomPlaybackMetadata(roomId: string, metadata: Partial<PlaybackMetadata>): void {
+  const existing = roomMetadataCache.get(roomId) || {};
+  roomMetadataCache.set(roomId, { ...existing, ...metadata });
+}
 
 /**
  * Validates that the calling socket belongs to a joined room and possesses HOST or MODERATOR role.
  * Queries PostgreSQL dynamically to guarantee fresh, authoritative role state.
  * Includes transient retry logic for Neon serverless cold-start connection drops (P1001 / P1017).
  */
-async function verifyHostOrModerator(
+export async function verifyHostOrModerator(
   session: SocketSessionData
 ): Promise<{
   authorized: boolean;
@@ -148,7 +166,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
 
         // Echo loop prevention: if already playing at this exact timestamp/rate, skip redundant DB write
         if (room.isPlaying && payload?.timestamp === undefined && newRate === room.playbackRate) {
-          const currentState = toSafePlaybackState(room, payload?.syncToken);
+          const currentState = toSafePlaybackState(room, payload?.syncToken, roomMetadataCache.get(session.roomId));
           if (typeof ack === "function") ack({ success: true, state: currentState });
           return;
         }
@@ -164,7 +182,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           },
         });
 
-        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken);
+        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken, roomMetadataCache.get(session.roomId));
         const roomChannel = getRoomChannel(session.roomCode);
 
         // Broadcast authoritative playback state to all participants in this room
@@ -226,7 +244,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
 
         // Echo loop prevention: if already paused with matching timestamp, skip redundant write
         if (!room.isPlaying && payload?.timestamp === undefined) {
-          const currentState = toSafePlaybackState(room, payload?.syncToken);
+          const currentState = toSafePlaybackState(room, payload?.syncToken, roomMetadataCache.get(session.roomId));
           if (typeof ack === "function") ack({ success: true, state: currentState });
           return;
         }
@@ -241,7 +259,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           },
         });
 
-        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken);
+        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken, roomMetadataCache.get(session.roomId));
         const roomChannel = getRoomChannel(session.roomCode);
 
         // Broadcast authoritative pause state to room members
@@ -299,7 +317,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           },
         });
 
-        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken);
+        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken, roomMetadataCache.get(session.roomId));
         const roomChannel = getRoomChannel(session.roomCode);
 
         // Broadcast seek state to room members
@@ -321,7 +339,15 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
   socket.on(
     "playback:change-video",
     async (
-      payload?: { videoId?: string; syncToken?: string },
+      payload?: {
+        videoId?: string;
+        syncToken?: string;
+        autoPlay?: boolean;
+        title?: string;
+        channelTitle?: string;
+        thumbnailUrl?: string;
+        durationSec?: number;
+      },
       ack?: (res: { success: boolean; state?: SafePlaybackState; error?: string }) => void
     ) => {
       try {
@@ -343,19 +369,28 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           return;
         }
 
+        const shouldAutoPlay = payload?.autoPlay === true;
         const now = new Date();
         const updatedRoom = await prisma.room.update({
           where: { id: room.id },
           data: {
             currentVideoId: parsedVideoId,
             currentTimestamp: 0.0,
-            isPlaying: false, // Default to paused at beginning of newly loaded video
+            isPlaying: shouldAutoPlay,
             playbackRate: 1.0,
             lastSyncAt: now,
           },
         });
 
-        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken);
+        const initialMeta: PlaybackMetadata = {
+          videoTitle: payload?.title || null,
+          channelTitle: payload?.channelTitle || null,
+          thumbnailUrl: payload?.thumbnailUrl || `https://img.youtube.com/vi/${parsedVideoId}/mqdefault.jpg`,
+          durationSec: typeof payload?.durationSec === "number" && payload.durationSec > 0 ? payload.durationSec : 0,
+        };
+        roomMetadataCache.set(session.roomId, initialMeta);
+
+        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken, initialMeta);
         const roomChannel = getRoomChannel(session.roomCode);
 
         // Broadcast newly selected video to all participants
@@ -363,6 +398,29 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
 
         if (typeof ack === "function") {
           ack({ success: true, state: safeState });
+        }
+
+        // Asynchronously resolve full details in background if title/duration were missing
+        if (!initialMeta.videoTitle || !initialMeta.durationSec) {
+          fetchVideoDetails(parsedVideoId).then((details) => {
+            if (details) {
+              const currentMeta = roomMetadataCache.get(session.roomId) || {};
+              const enriched: PlaybackMetadata = {
+                videoTitle: currentMeta.videoTitle || details.title,
+                channelTitle: currentMeta.channelTitle || details.channelTitle,
+                thumbnailUrl: currentMeta.thumbnailUrl || details.thumbnailUrl,
+                durationSec: currentMeta.durationSec || details.durationSec,
+              };
+              roomMetadataCache.set(session.roomId, enriched);
+
+              prisma.room.findUnique({ where: { id: session.roomId } }).then((freshRoom) => {
+                if (freshRoom && freshRoom.currentVideoId === parsedVideoId) {
+                  const stateWithDetails = toSafePlaybackState(freshRoom, undefined, enriched);
+                  io.to(roomChannel).emit("playback:state", { state: stateWithDetails });
+                }
+              }).catch(() => {});
+            }
+          }).catch(() => {});
         }
       } catch (error) {
         console.error("[playback:change-video Error]:", error);
@@ -415,7 +473,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           },
         });
 
-        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken);
+        const safeState = toSafePlaybackState(updatedRoom, payload?.syncToken, roomMetadataCache.get(session.roomId));
         const roomChannel = getRoomChannel(session.roomCode);
 
         io.to(roomChannel).emit("playback:state", { state: safeState });
@@ -458,7 +516,7 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
           return;
         }
 
-        const safeState = toSafePlaybackState(room);
+        const safeState = toSafePlaybackState(room, undefined, roomMetadataCache.get(session.roomId));
 
         if (typeof ack === "function") {
           ack({ success: true, state: safeState });
@@ -470,6 +528,152 @@ export function registerPlaybackHandlers(socket: Socket, io: SocketIOServer): vo
         if (typeof ack === "function") {
           ack({ success: false, error: "Failed to retrieve playback state" });
         }
+      }
+    }
+  );
+
+  // 7. Video Ended / Auto-Advance (Client reports current video completed playback)
+  socket.on(
+    "playback:ended",
+    async (
+      payload?: { videoId?: string },
+      ack?: (res: {
+        success: boolean;
+        advanced?: boolean;
+        emptyQueue?: boolean;
+        reason?: string;
+        state?: SafePlaybackState;
+        queue?: SafeQueueItem[];
+        error?: string;
+      }) => void
+    ) => {
+      try {
+        if (!session.joinedRoom) {
+          const errorMsg = "Must join authorized room before emitting playback:ended";
+          if (typeof ack === "function") ack({ success: false, error: errorMsg });
+          socket.emit("error", { message: errorMsg, code: "UNAUTHORIZED" });
+          return;
+        }
+
+        const endedVideoId = typeof payload?.videoId === "string" ? payload.videoId.trim() : "";
+        if (!endedVideoId) {
+          const errorMsg = "videoId is required in playback:ended payload";
+          if (typeof ack === "function") ack({ success: false, error: errorMsg });
+          socket.emit("error", { message: errorMsg, code: "INVALID_VIDEO_ID" });
+          return;
+        }
+
+        const roomChannel = getRoomChannel(session.roomCode);
+        const result = await advanceQueueOnVideoEnd(session.roomId, endedVideoId);
+
+        if (result.advanced && result.updatedRoom) {
+          if (result.nextItem) {
+            roomMetadataCache.set(session.roomId, {
+              videoTitle: result.nextItem.title,
+              channelTitle: result.nextItem.channelTitle,
+              thumbnailUrl: result.nextItem.thumbnailUrl,
+              durationSec: result.nextItem.durationSec,
+            });
+          }
+          const safeState = toSafePlaybackState(result.updatedRoom, undefined, roomMetadataCache.get(session.roomId));
+          io.to(roomChannel).emit("playback:state", { state: safeState });
+          io.to(roomChannel).emit("queue:updated", {
+            queue: result.queue || [],
+            action: "auto-next",
+            activeItemId: result.nextItem?.id,
+          });
+
+          if (typeof ack === "function") {
+            ack({ success: true, advanced: true, state: safeState, queue: result.queue });
+          }
+        } else if (result.emptyQueue && result.updatedRoom) {
+          roomMetadataCache.delete(session.roomId);
+          const safeState = toSafePlaybackState(result.updatedRoom, undefined, null);
+          io.to(roomChannel).emit("playback:state", { state: safeState });
+          io.to(roomChannel).emit("queue:updated", {
+            queue: result.queue || [],
+            action: "empty",
+          });
+
+          if (typeof ack === "function") {
+            ack({
+              success: true,
+              advanced: false,
+              emptyQueue: true,
+              state: safeState,
+              queue: result.queue,
+            });
+          }
+        } else {
+          // ALREADY_ADVANCED or harmless duplicate
+          if (typeof ack === "function") {
+            ack({ success: true, advanced: false, reason: result.reason || "ALREADY_ADVANCED" });
+          }
+        }
+      } catch (error) {
+        console.error("[playback:ended Error]:", error);
+        if (typeof ack === "function") {
+          ack({ success: false, error: "Internal error processing playback ended event" });
+        }
+      }
+    }
+  );
+
+  // 8. Sync Video Metadata (Player discovers video duration/title and syncs across all devices)
+  socket.on(
+    "playback:sync-metadata",
+    async (
+      payload?: {
+        videoId?: string;
+        durationSec?: number;
+        title?: string;
+        channelTitle?: string;
+        thumbnailUrl?: string;
+      },
+      ack?: (res: { success: boolean; state?: SafePlaybackState }) => void
+    ) => {
+      try {
+        if (!session.joinedRoom) {
+          if (typeof ack === "function") ack({ success: false });
+          return;
+        }
+
+        const room = await prisma.room.findUnique({ where: { id: session.roomId } });
+        if (!room || !room.currentVideoId) {
+          if (typeof ack === "function") ack({ success: false });
+          return;
+        }
+
+        // Only accept metadata matching the currently active room video
+        if (payload?.videoId && payload.videoId !== room.currentVideoId) {
+          if (typeof ack === "function") ack({ success: false });
+          return;
+        }
+
+        const existing = roomMetadataCache.get(session.roomId) || {};
+        const updatedMeta: PlaybackMetadata = {
+          videoTitle: payload?.title || existing.videoTitle || null,
+          channelTitle: payload?.channelTitle || existing.channelTitle || null,
+          thumbnailUrl: payload?.thumbnailUrl || existing.thumbnailUrl || null,
+          durationSec: typeof payload?.durationSec === "number" && payload.durationSec > 0
+            ? payload.durationSec
+            : existing.durationSec || 0,
+        };
+
+        roomMetadataCache.set(session.roomId, updatedMeta);
+
+        const safeState = toSafePlaybackState(room, undefined, updatedMeta);
+        const roomChannel = getRoomChannel(session.roomCode);
+
+        // Broadcast enriched state with accurate duration to Phone Remote
+        io.to(roomChannel).emit("playback:state", { state: safeState });
+
+        if (typeof ack === "function") {
+          ack({ success: true, state: safeState });
+        }
+      } catch (err) {
+        console.warn("[playback:sync-metadata Warning]:", err);
+        if (typeof ack === "function") ack({ success: false });
       }
     }
   );

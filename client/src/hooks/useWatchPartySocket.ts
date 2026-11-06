@@ -7,13 +7,11 @@ import type {
   RequestType,
   Role,
   RoleRequest,
+  QueueItemData,
 } from '../types/room';
+import { resolveSocketUrl } from '../utils/env';
 
-const SOCKET_URL = (
-  import.meta.env.VITE_SOCKET_URL ||
-  import.meta.env.VITE_BACKEND_URL ||
-  'http://localhost:5000'
-).replace(/\/+$/, '');
+const SOCKET_URL = resolveSocketUrl();
 
 /** Wraps a socket.emit-with-ack in a timeout promise to prevent indefinite hangs. */
 function emitWithTimeout<T>(
@@ -48,6 +46,7 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
   const [isJoined, setIsJoined] = useState(false);
   const [roster, setRoster] = useState<ParticipantData[]>([]);
   const [playbackState, setPlaybackState] = useState<SafePlaybackState | null>(null);
+  const [queue, setQueue] = useState<QueueItemData[]>([]);
   const [controlRequests, setControlRequests] = useState<SafeControlRequest[]>([]);
   const [roleRequests, setRoleRequests] = useState<RoleRequest[]>([]);
   const [lastNotice, setLastNotice] = useState<string | null>(null);
@@ -91,11 +90,18 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
       socket.emit(
         'room:join',
         { roomCode },
-        (res: { success: boolean; roster?: ParticipantData[]; playback?: SafePlaybackState; error?: string }) => {
+        (res: {
+          success: boolean;
+          roster?: ParticipantData[];
+          playback?: SafePlaybackState;
+          queue?: QueueItemData[];
+          error?: string;
+        }) => {
           if (res.success) {
             setIsJoined(true);
             if (res.roster) setRoster(res.roster);
             if (res.playback) setPlaybackState(res.playback);
+            if (res.queue) setQueue(res.queue);
 
             // Fetch initial list of requests now that room channel is joined
             socket.emit('request:list', {}, (reqRes: { success: boolean; requests?: SafeControlRequest[] }) => {
@@ -126,10 +132,17 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
     // Room joined event
     socket.on(
       'room:joined',
-      (data: { roomCode: string; participant: ParticipantData; roster: ParticipantData[]; playback: SafePlaybackState }) => {
+      (data: {
+        roomCode: string;
+        participant: ParticipantData;
+        roster: ParticipantData[];
+        playback: SafePlaybackState;
+        queue?: QueueItemData[];
+      }) => {
         setIsJoined(true);
         if (data.roster) setRoster(data.roster);
         if (data.playback) setPlaybackState(data.playback);
+        if (data.queue) setQueue(data.queue);
 
         // Fetch initial list of requests
         socket.emit('request:list', {}, (reqRes: { success: boolean; requests?: SafeControlRequest[] }) => {
@@ -137,6 +150,33 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
             setControlRequests(reqRes.requests);
           }
         });
+      }
+    );
+
+    // Authoritative queue broadcast updates
+    socket.on(
+      'queue:updated',
+      (data: {
+        queue: QueueItemData[];
+        action?: string;
+        item?: QueueItemData;
+        itemId?: string;
+        activeItemId?: string;
+      }) => {
+        if (Array.isArray(data?.queue)) {
+          setQueue(data.queue);
+        }
+        if (data?.action === 'add' && data.item) {
+          setLastNotice(`Added "${data.item.title}" to queue`);
+        } else if (data?.action === 'play-next') {
+          setLastNotice('Playing next video in queue');
+        } else if (data?.action === 'auto-next') {
+          setLastNotice('Now playing next video in queue');
+        } else if (data?.action === 'remove') {
+          setLastNotice('Item removed from queue');
+        } else if (data?.action === 'clear') {
+          setLastNotice('Queue cleared');
+        }
       }
     );
 
@@ -330,7 +370,16 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
   );
 
   const changeVideo = useCallback(
-    (videoId: string): Promise<boolean> => {
+    (
+      videoId: string,
+      meta?: {
+        autoPlay?: boolean;
+        title?: string;
+        channelTitle?: string;
+        thumbnailUrl?: string;
+        durationSec?: number;
+      }
+    ): Promise<boolean> => {
       return new Promise((resolve) => {
         if (!socketRef.current) {
           onErrorRef.current?.('Not connected to room. Please wait for reconnection.');
@@ -340,7 +389,7 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
         emitWithTimeout<{ success: boolean; state?: SafePlaybackState; error?: string }>(
           socketRef.current,
           'playback:change-video',
-          { videoId, syncToken }
+          { videoId, syncToken, ...meta }
         )
           .then((res) => {
             if (res.success && res.state) {
@@ -356,6 +405,28 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
             resolve(false);
           });
       });
+    },
+    []
+  );
+
+  const syncVideoMetadata = useCallback(
+    (meta: {
+      videoId: string;
+      durationSec: number;
+      title?: string;
+      channelTitle?: string;
+      thumbnailUrl?: string;
+    }): void => {
+      if (!socketRef.current) return;
+      socketRef.current.emit(
+        'playback:sync-metadata',
+        meta,
+        (res?: { success: boolean; state?: SafePlaybackState }) => {
+          if (res?.success && res.state) {
+            setPlaybackState(res.state);
+          }
+        }
+      );
     },
     []
   );
@@ -532,11 +603,181 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
     []
   );
 
+  // Queue Operations
+  const addToQueue = useCallback(
+    (input: {
+      videoId: string;
+      title?: string;
+      channelTitle?: string;
+      thumbnailUrl?: string;
+      durationSec?: number;
+      playNext?: boolean;
+    }): Promise<{ success: boolean; item?: QueueItemData; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!socketRef.current) return resolve({ success: false, error: 'Socket disconnected' });
+        emitWithTimeout<{
+          success: boolean;
+          item?: QueueItemData;
+          queue?: QueueItemData[];
+          error?: string;
+        }>(socketRef.current, 'queue:add', input)
+          .then((res) => {
+            if (res.success) {
+              if (res.queue) setQueue(res.queue);
+              resolve({ success: true, item: res.item });
+            } else {
+              if (res.error) onErrorRef.current?.(res.error);
+              resolve({ success: false, error: res.error || 'Failed to add item to queue' });
+            }
+          })
+          .catch((err) => {
+            const msg = err.message || 'Queue add timed out';
+            onErrorRef.current?.(msg);
+            resolve({ success: false, error: msg });
+          });
+      });
+    },
+    []
+  );
+
+  const removeFromQueue = useCallback(
+    (itemId: string): Promise<boolean> => {
+      return new Promise((resolve) => {
+        if (!socketRef.current) return resolve(false);
+        emitWithTimeout<{ success: boolean; queue?: QueueItemData[]; error?: string }>(
+          socketRef.current,
+          'queue:remove',
+          { itemId }
+        )
+          .then((res) => {
+            if (res.success) {
+              if (res.queue) setQueue(res.queue);
+              resolve(true);
+            } else {
+              if (res.error) onErrorRef.current?.(res.error);
+              resolve(false);
+            }
+          })
+          .catch((err) => {
+            onErrorRef.current?.(err.message || 'Queue remove timed out');
+            resolve(false);
+          });
+      });
+    },
+    []
+  );
+
+  const reorderQueue = useCallback(
+    (itemId: string, targetPosition: number): Promise<boolean> => {
+      return new Promise((resolve) => {
+        if (!socketRef.current) return resolve(false);
+        emitWithTimeout<{ success: boolean; queue?: QueueItemData[]; error?: string }>(
+          socketRef.current,
+          'queue:reorder',
+          { itemId, targetPosition }
+        )
+          .then((res) => {
+            if (res.success) {
+              if (res.queue) setQueue(res.queue);
+              resolve(true);
+            } else {
+              if (res.error) onErrorRef.current?.(res.error);
+              resolve(false);
+            }
+          })
+          .catch((err) => {
+            onErrorRef.current?.(err.message || 'Queue reorder timed out');
+            resolve(false);
+          });
+      });
+    },
+    []
+  );
+
+  const playNextInQueue = useCallback(
+    (itemId?: string): Promise<boolean> => {
+      return new Promise((resolve) => {
+        if (!socketRef.current) return resolve(false);
+        emitWithTimeout<{
+          success: boolean;
+          playback?: SafePlaybackState;
+          queue?: QueueItemData[];
+          error?: string;
+        }>(socketRef.current, 'queue:play-next', { itemId })
+          .then((res) => {
+            if (res.success) {
+              if (res.playback) setPlaybackState(res.playback);
+              if (res.queue) setQueue(res.queue);
+              resolve(true);
+            } else {
+              if (res.error) onErrorRef.current?.(res.error);
+              resolve(false);
+            }
+          })
+          .catch((err) => {
+            onErrorRef.current?.(err.message || 'Play next timed out');
+            resolve(false);
+          });
+      });
+    },
+    []
+  );
+
+  const clearQueue = useCallback((): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (!socketRef.current) return resolve(false);
+      emitWithTimeout<{ success: boolean; queue?: QueueItemData[]; error?: string }>(
+        socketRef.current,
+        'queue:clear',
+        {}
+      )
+        .then((res) => {
+          if (res.success) {
+            if (res.queue) setQueue(res.queue);
+            resolve(true);
+          } else {
+            if (res.error) onErrorRef.current?.(res.error);
+            resolve(false);
+          }
+        })
+        .catch((err) => {
+          onErrorRef.current?.(err.message || 'Queue clear timed out');
+          resolve(false);
+        });
+    });
+  }, []);
+
+  const notifyVideoEnded = useCallback((videoId: string): Promise<{ success: boolean; advanced?: boolean }> => {
+    return new Promise((resolve) => {
+      if (!socketRef.current) return resolve({ success: false });
+      emitWithTimeout<{
+        success: boolean;
+        advanced?: boolean;
+        state?: SafePlaybackState;
+        queue?: QueueItemData[];
+        error?: string;
+      }>(socketRef.current, 'playback:ended', { videoId })
+        .then((res) => {
+          if (res.success) {
+            if (res.state) setPlaybackState(res.state);
+            if (res.queue) setQueue(res.queue);
+            resolve({ success: true, advanced: res.advanced });
+          } else {
+            resolve({ success: false });
+          }
+        })
+        .catch(() => {
+          resolve({ success: false });
+        });
+    });
+  }, []);
+
   return {
     isConnected,
     isJoined,
     roster,
     playbackState,
+    queue,
     controlRequests,
     roleRequests,
     lastNotice,
@@ -552,5 +793,12 @@ export function useWatchPartySocket(options: UseWatchPartySocketOptions) {
     transferHost,
     requestRole,
     resolveRoleRequest,
+    addToQueue,
+    removeFromQueue,
+    reorderQueue,
+    playNextInQueue,
+    clearQueue,
+    notifyVideoEnded,
+    syncVideoMetadata,
   };
 }

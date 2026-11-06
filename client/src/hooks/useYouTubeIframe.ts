@@ -149,6 +149,14 @@ export function useYouTubeIframe(options: UseYouTubePlayerOptions) {
       });
     }
 
+    // Only destroy player when component unmounts or containerId changes, NOT on routine videoId transitions
+    return () => {
+      // Intentionally preserve playerRef if containerId hasn't changed to allow seamless track transitions
+    };
+  }, [isApiReady, containerId, Boolean(videoId)]);
+
+  // Cleanup player when useYouTubeIframe unmounts completely
+  useEffect(() => {
     return () => {
       if (playerRef.current && typeof playerRef.current.destroy === 'function') {
         try {
@@ -161,7 +169,7 @@ export function useYouTubeIframe(options: UseYouTubePlayerOptions) {
         setIsLoading(false);
       }
     };
-  }, [isApiReady, containerId, videoId]);
+  }, [containerId]);
 
   const loadVideoById = useCallback((videoId: string, startSeconds = 0) => {
     setPlayerError(null);
@@ -228,6 +236,17 @@ export function useYouTubeIframe(options: UseYouTubePlayerOptions) {
     return -1;
   }, []);
 
+  const getVideoData = useCallback((): { video_id?: string; author?: string; title?: string } | null => {
+    if (playerRef.current && typeof playerRef.current.getVideoData === 'function') {
+      try {
+        return playerRef.current.getVideoData();
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
   return {
     isApiReady,
     isPlayerReady,
@@ -242,6 +261,7 @@ export function useYouTubeIframe(options: UseYouTubePlayerOptions) {
     getCurrentTime,
     getDuration,
     getPlayerState,
+    getVideoData,
     setPlayerError,
   };
 }
